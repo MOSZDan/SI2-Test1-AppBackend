@@ -1,0 +1,11 @@
+Django~=5.2.6
+djangorestframework~=3.16.1
+requests~=2.32.5
+pillow~=11.3.0
+supabase~=2.19.0
+django-filter~=25.1
+reportlab~=4.4.4
+dj-config-url~=0.1.1
+python-dotenv~=1.1.1
+# Eliminados: opencv-python, face-recognition, numpy, easyocr, fastapi, pydantic (solo usados en el microservicio)
+

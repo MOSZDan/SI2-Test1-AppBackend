@@ -237,3 +237,9 @@ AI_IMAGE_SETTINGS = {
     'FACE_TOLERANCE': float(os.getenv("AI_FACE_TOLERANCE", "0.6")),
     'PLATE_CONFIDENCE_THRESHOLD': float(os.getenv("AI_PLATE_CONFIDENCE_THRESHOLD", "0.5")),
 }
+
+# ------------------------------------
+# Configuración del microservicio de IA
+# ------------------------------------
+AI_MICROSERVICE_URL = os.getenv('AI_MICROSERVICE_URL', 'http://localhost:8001')
+
