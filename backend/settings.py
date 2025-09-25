@@ -42,7 +42,7 @@ else:
         ["https://tu-frontend.com"]
     )
     CORS_ALLOW_CREDENTIALS = True
-    ALLOWED_HOSTS = _csv_env("ALLOWED_HOSTS", ["127.0.0.1", "localhost"])
+    ALLOWED_HOSTS = _csv_env("ALLOWED_HOSTS", ["127.0.0.1", "localhost", "si2-test1-appbackend.onrender.com"])
     SESSION_COOKIE_SAMESITE = os.getenv("SESSION_COOKIE_SAMESITE", "None")
     CSRF_COOKIE_SAMESITE = os.getenv("CSRF_COOKIE_SAMESITE", "None")
     SESSION_COOKIE_SECURE = True
@@ -242,4 +242,3 @@ AI_IMAGE_SETTINGS = {
 # Configuración del microservicio de IA
 # ------------------------------------
 AI_MICROSERVICE_URL = os.getenv('AI_MICROSERVICE_URL', 'http://localhost:8001')
-
