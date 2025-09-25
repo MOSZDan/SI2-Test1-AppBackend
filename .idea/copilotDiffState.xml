@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="CopilotDiffPersistence">
+    <option name="pendingDiffs">
+      <map>
+        <entry key="$PROJECT_DIR$/backend/urls.py">
+          <value>
+            <PendingDiffInfo>
+              <option name="filePath" value="$PROJECT_DIR$/backend/urls.py" />
+              <option name="originalContent" value="from django.contrib import admin&#10;from django.urls import path, include&#10;from api.views import ComprobantePDFView&#10;urlpatterns = [&#10;    path('admin/', admin.site.urls),&#10;    path('api/', include('api.urls')),   # &lt;--- monta todos los endpoints&#10;    path('api/comprobante/&lt;int:pk&gt;/', ComprobantePDFView.as_view(), name='comprobante-pdf'),&#10;]&#10;" />
+              <option name="updatedContent" value="from django.contrib import admin&#10;from django.urls import path, include&#10;from django.http import JsonResponse&#10;from django.views.decorators.csrf import csrf_exempt&#10;from api.views import ComprobantePDFView&#10;&#10;def api_status(request):&#10;    &quot;&quot;&quot;Vista simple para la ruta raíz que confirma que la API está funcionando&quot;&quot;&quot;&#10;    return JsonResponse({&#10;        &quot;message&quot;: &quot;Condominium API is running&quot;,&#10;        &quot;status&quot;: &quot;OK&quot;,&#10;        &quot;version&quot;: &quot;1.0.0&quot;,&#10;        &quot;endpoints&quot;: {&#10;            &quot;api&quot;: &quot;/api/&quot;,&#10;            &quot;admin&quot;: &quot;/admin/&quot;,&#10;            &quot;auth&quot;: {&#10;                &quot;login&quot;: &quot;/api/auth/login/&quot;,&#10;                &quot;register&quot;: &quot;/api/auth/register/&quot;,&#10;                &quot;logout&quot;: &quot;/api/auth/logout/&quot;&#10;            }&#10;        }&#10;    })&#10;&#10;urlpatterns = [&#10;    path('', api_status, name='api-status'),  # Ruta raíz&#10;    path('admin/', admin.site.urls),&#10;    path('api/', include('api.urls')),   # &lt;--- monta todos los endpoints&#10;    path('api/comprobante/&lt;int:pk&gt;/', ComprobantePDFView.as_view(), name='comprobante-pdf'),&#10;]" />
+            </PendingDiffInfo>
+          </value>
+        </entry>
+        <entry key="$PROJECT_DIR$/requirements.txt">
+          <value>
+            <PendingDiffInfo>
+              <option name="filePath" value="$PROJECT_DIR$/requirements.txt" />
+              <option name="originalContent" value="Django~=5.2.6&#10;djangorestframework~=3.16.1&#10;requests~=2.32.5&#10;pillow~=11.3.0&#10;supabase~=2.19.0&#10;django-filter~=25.1&#10;reportlab~=4.4.4&#10;dj-config-url~=0.1.1&#10;python-dotenv~=1.1.1&#10;gunicorn~=21.2.0&#10;django-cors-headers~=4.3.1&#10;psycopg2-binary~=2.9.9&#10;whitenoise~=6.6.0&#10;numpy~=1.26.0&#10;# Solo dependencias del backend Django, sin librerías de IA ni FastAPI.&#10;" />
+              <option name="updatedContent" value="Django~=5.2.6&#10;djangorestframework~=3.16.1&#10;requests~=2.32.5&#10;pillow~=11.3.0&#10;supabase~=2.19.0&#10;django-filter~=25.1&#10;reportlab~=4.4.4&#10;dj-config-url~=0.1.1&#10;python-dotenv~=1.1.1&#10;gunicorn~=21.2.0&#10;django-cors-headers~=4.3.1&#10;psycopg2-binary~=2.9.9&#10;whitenoise~=6.6.0&#10;numpy~=1.26.0&#10;# Solo dependencias del backend Django, sin librerías de IA ni FastAPI." />
+            </PendingDiffInfo>
+          </value>
+        </entry>
+      </map>
+    </option>
+  </component>
+</project>
