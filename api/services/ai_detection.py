@@ -14,6 +14,7 @@ from ..models import Usuario, PerfilFacial, ReconocimientoFacial, DeteccionPlaca
 from .supabase_storage import SupabaseStorageService
 import logging
 from django.core.files.uploadedfile import InMemoryUploadedFile
+import requests
 logger = logging.getLogger(__name__)
 
 
@@ -111,45 +112,35 @@ class FacialRecognitionService:
             return False
 
     def recognize_face(self, image_base64: str, camera_location: str = "Principal") -> Dict:
-        """Reconoce una cara en la imagen"""
+        """Reconoce una cara en la imagen usando el microservicio de IA"""
         try:
-            image = self._base64_to_image(image_base64)
-            if image is None:
-                return self._create_recognition_result(False, None, 0.0, image_base64, camera_location)
-
-            face_locations = face_recognition.face_locations(image)
-            if not face_locations:
-                return self._create_recognition_result(False, None, 0.0, image_base64, camera_location)
-
-            face_encodings = face_recognition.face_encodings(image, face_locations)
-            if not face_encodings:
-                return self._create_recognition_result(False, None, 0.0, image_base64, camera_location)
-
-            for face_encoding in face_encodings:
-                if not self.known_encodings:
-                    break
-
-                matches = face_recognition.compare_faces(
-                    self.known_encodings, face_encoding, tolerance=self.tolerance
-                )
-                face_distances = face_recognition.face_distance(
-                    self.known_encodings, face_encoding
-                )
-
-                if any(matches):
-                    best_match_index = np.argmin(face_distances)
-                    if matches[best_match_index]:
-                        usuario = self.known_users[best_match_index]
-                        confidence = (1 - face_distances[best_match_index]) * 100
-
-                        return self._create_recognition_result(
-                            True, usuario, confidence, image_base64, camera_location
-                        )
-
+            # Serializar encodings y usuarios conocidos
+            known_encodings = [enc.tolist() for enc in self.known_encodings]
+            known_users = [str(u.codigo) for u in self.known_users]
+            payload = {
+                "image_base64": image_base64,
+                "known_encodings": known_encodings,
+                "known_users": known_users,
+                "tolerance": self.tolerance
+            }
+            # Llamar al microservicio
+            url = settings.AI_MICROSERVICE_URL + "/recognize-face/"
+            resp = requests.post(url, json=payload, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+            # Procesar respuesta
+            results = data.get("results", [])
+            for result in results:
+                user_codigo = result.get("user")
+                if user_codigo:
+                    usuario = Usuario.objects.filter(codigo=user_codigo).first()
+                    confidence = 100.0  # El microservicio no calcula confianza, puedes ajustar si lo deseas
+                    return self._create_recognition_result(
+                        True, usuario, confidence, image_base64, camera_location
+                    )
             return self._create_recognition_result(False, None, 0.0, image_base64, camera_location)
-
         except Exception as e:
-            logger.error(f"Error en reconocimiento facial: {e}")
+            logger.error(f"Error en reconocimiento facial (microservicio): {e}")
             return self._create_recognition_result(False, None, 0.0, image_base64, camera_location)
 
     def _create_recognition_result(self, is_resident: bool, usuario: Optional[Usuario],
@@ -505,34 +496,31 @@ class PlateDetectionService:
 
     def detect_plate(self, image_base64: str, camera_location: str = "Estacionamiento",
                      access_type: str = "entrada") -> Dict:
-        """Detecta placa en la imagen"""
+        """Detecta placa en la imagen usando el microservicio de IA"""
         try:
-            image = self._base64_to_image(image_base64)
-            if image is None:
-                return self._create_detection_result(None, False, 0.0, image_base64,
-                                                     camera_location, access_type)
-
-            processed_image = self._preprocess_image(image)
-            results = self.reader.readtext(processed_image)
-
-            for (bbox, text, confidence) in results:
-                clean_text = self._clean_plate_text(text)
-
-                if self._is_valid_plate(clean_text) and confidence > self.confidence_threshold:
-                    is_authorized = self._check_authorization(clean_text)
-
-                    return self._create_detection_result(
-                        clean_text, is_authorized, confidence * 100,
-                        image_base64, camera_location, access_type
-                    )
-
-            return self._create_detection_result(None, False, 0.0, image_base64,
-                                                 camera_location, access_type)
-
+            payload = {"image_base64": image_base64}
+            url = settings.AI_MICROSERVICE_URL + "/detect-plate/"
+            resp = requests.post(url, json=payload, timeout=20)
+            resp.raise_for_status()
+            data = resp.json()
+            plates = data.get("plates", [])
+            # Buscar la placa con mayor confianza
+            best_plate = None
+            best_conf = 0.0
+            for plate_info in plates:
+                if plate_info["confidence"] > best_conf:
+                    best_plate = plate_info["plate"]
+                    best_conf = plate_info["confidence"]
+            if best_plate:
+                is_authorized = self._check_authorization(best_plate)
+                return self._create_detection_result(
+                    best_plate, is_authorized, best_conf * 100,
+                    image_base64, camera_location, access_type
+                )
+            return self._create_detection_result(None, False, 0.0, image_base64, camera_location, access_type)
         except Exception as e:
-            logger.error(f"Error en detección de placa: {e}")
-            return self._create_detection_result(None, False, 0.0, image_base64,
-                                                 camera_location, access_type)
+            logger.error(f"Error en detección de placa (microservicio): {e}")
+            return self._create_detection_result(None, False, 0.0, image_base64, camera_location, access_type)
 
     def _preprocess_image(self, image: np.ndarray) -> np.ndarray:
         """Preprocesa la imagen para mejor detección de placas"""
