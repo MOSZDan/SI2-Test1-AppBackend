@@ -7,5 +7,8 @@ django-filter~=25.1
 reportlab~=4.4.4
 dj-config-url~=0.1.1
 python-dotenv~=1.1.1
-# Eliminados: opencv-python, face-recognition, numpy, easyocr, fastapi, pydantic (solo usados en el microservicio)
-
+gunicorn~=21.2.0
+django-cors-headers~=4.3.1
+psycopg2-binary~=2.9.9
+whitenoise~=6.6.0
+# Solo dependencias del backend Django, sin librerías de IA ni FastAPI.
