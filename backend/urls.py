@@ -22,7 +22,7 @@ def api_status(request):
     })
 
 urlpatterns = [
-    path('', api_status, name='api-status'),  # Ruta raíz
+    path('', api_status, name='api-status'),  # Ruta raízzzz
     path('admin/', admin.site.urls),
     path('api/', include('api.urls')),   # <--- monta todos los endpoints
     path('api/comprobante/<int:pk>/', ComprobantePDFView.as_view(), name='comprobante-pdf'),
