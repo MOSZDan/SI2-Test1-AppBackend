@@ -7,5 +7,6 @@ django-filter~=25.1
 reportlab~=4.4.4
 dj-config-url~=0.1.1
 python-dotenv~=1.1.1
+gunicorn~=21.2.0
 # Eliminados: opencv-python, face-recognition, numpy, easyocr, fastapi, pydantic (solo usados en el microservicio)
 
