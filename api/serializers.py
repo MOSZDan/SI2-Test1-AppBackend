@@ -255,3 +255,36 @@ class ReporteSeguridadSerializer(serializers.ModelSerializer):
     class Meta:
         model = ReporteSeguridad
         fields = "__all__"
+# Publicar Avisos/Comunicados
+# -----------------------------
+class PublicarComunicadoSerializer(serializers.Serializer):
+    """
+    Valida la creación/publicación de un comunicado.
+    - prioridad se mapea a Comunicados.tipo
+    - estado final del comunicado: 'publicado' (en la vista/servicio)
+    - destinatarios incluye 'todos'
+    """
+    titulo = serializers.CharField(max_length=500)
+    contenido = serializers.CharField()
+    # Prioridad: usamos el campo 'tipo' del modelo Comunicados
+    prioridad = serializers.ChoiceField(choices=["normal", "importante", "urgente"])
+    # Destinatarios: control en backend (incluye 'todos'); el front solo muestra opciones.
+    destinatarios = serializers.ChoiceField(
+        choices=["todos", "copropietarios", "inquilinos", "personal", "usuarios"],
+        required=True
+    )
+    # Requerido únicamente cuando destinatarios == "usuarios"
+    usuario_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        required=False,
+        allow_empty=False
+    )
+    # Programación opcional; si no vienen, se usarán valores por defecto (ahora) en la vista
+    fecha_publicacion = serializers.DateField(required=False)
+    hora_publicacion = serializers.TimeField(required=False)
+
+    def validate(self, data):
+        dest = data.get("destinatarios")
+        if dest == "usuarios" and not data.get("usuario_ids"):
+            raise serializers.ValidationError({"usuario_ids": "Requerido cuando destinatarios=usuarios"})
+        return data

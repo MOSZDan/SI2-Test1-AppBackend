@@ -1,5 +1,4 @@
 from decimal import Decimal
-
 from django.http import FileResponse, Http404
 from rest_framework import viewsets, permissions
 from django_filters.rest_framework import DjangoFilterBackend
@@ -28,6 +27,7 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 from datetime import datetime, timedelta
 from django.db.models import Q, Sum
+from .services.avisos import publicar_comunicado_y_notificar
 
 from .models import (
     Rol, Usuario, Propiedad, Multa, Pagos, Notificaciones, AreasComunes, Tareas,
@@ -42,7 +42,8 @@ from .serializers import (
     FacturaSerializer, FinanzasSerializer, ComunicadosSerializer, HorariosSerializer,
     ReservaSerializer, AsignacionSerializer, EnvioSerializer, RegistroSerializer,
     BitacoraSerializer, ReconocimientoFacialSerializer, PerfilFacialSerializer, DeteccionPlacaSerializer,
-    ReporteSeguridadSerializer, EstadoCuentaSerializer, PagoRealizadoSerializer
+    ReporteSeguridadSerializer, EstadoCuentaSerializer, PagoRealizadoSerializer,
+    PublicarComunicadoSerializer,
 )
 
 
@@ -486,9 +487,49 @@ class FinanzasViewSet(BaseModelViewSet):
 class ComunicadosViewSet(BaseModelViewSet):
     queryset = Comunicados.objects.all().order_by('id')
     serializer_class = ComunicadosSerializer
-    filterset_fields = ['tipo', 'fecha', 'estado', 'codigousuario']
+    # OJO: el campo es 'codigo_usuario' (tu modelo), no 'codigousuario'
+    filterset_fields = ['tipo', 'fecha', 'estado', 'codigo_usuario']
     search_fields = ['titulo', 'contenido', 'url', 'tipo', 'estado']
     ordering_fields = ['id', 'fecha']
+
+    @action(detail=False, methods=['post'], url_path='publicar', permission_classes=[IsAuthenticated])
+    def publicar(self, request):
+        s = PublicarComunicadoSerializer(data=request.data)
+        s.is_valid(raise_exception=True)
+        data = s.validated_data
+
+        # Admin por email autenticado
+        try:
+            admin = Usuario.objects.get(correo=request.user.email)
+        except Usuario.DoesNotExist:
+            return Response({"detail": "Admin no encontrado"}, status=404)
+
+        now = timezone.localtime()
+        fecha_pub = data.get("fecha_publicacion") or now.date()
+        hora_pub  = data.get("hora_publicacion")  or now.time()
+
+        try:
+            comunicado, stats = publicar_comunicado_y_notificar(
+                admin=admin,
+                titulo=data["titulo"],
+                contenido=data["contenido"],
+                prioridad=data["prioridad"],
+                destinatarios=data["destinatarios"],  # incluye "todos"
+                fecha_pub=fecha_pub,
+                hora_pub=hora_pub,
+                usuario_ids=data.get("usuario_ids"),
+            )
+        except Exception as e:
+            return Response({"detail": "Error al publicar en la base de datos.", "error": str(e)},
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        body = {
+            "comunicado": ComunicadosSerializer(comunicado).data,
+            "envio": stats,
+            "mensaje": "Publicado y notificado." if stats["errores"] == 0 else
+                       "Publicado con errores de envío.",
+        }
+        return Response(body, status=200)
 
 
 class HorariosViewSet(BaseModelViewSet):

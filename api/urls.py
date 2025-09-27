@@ -38,11 +38,17 @@ router.register(r'reconocimientos-faciales', ReconocimientoFacialViewSet)
 router.register(r'detecciones-placas', DeteccionPlacaViewSet)
 router.register(r'perfiles-faciales', PerfilFacialViewSet)
 router.register(r'reportes-seguridad', ReporteSeguridadViewSet)
-urlpatterns = [
-    path('', include(router.urls)),
-    path('auth/login/', LoginView.as_view(), name='auth-login'),
-    path('auth/register/', RegisterView.as_view(), name='auth-register'),
-    path('auth/logout/', LogoutView.as_view(), name='auth-logout'),
-    path("estado-cuenta/", EstadoCuentaView.as_view(), name="estado-cuenta"),
 
+urlpatterns = [
+    # Todas las rutas de los viewsets
+    path('', include(router.urls)),
+
+    # Auth
+    path('auth/login/',    LoginView.as_view(),    name='auth-login'),
+    path('auth/register/', RegisterView.as_view(), name='auth-register'),
+    path('auth/logout/',   LogoutView.as_view(),   name='auth-logout'),
+
+    # Estado de cuenta y comprobante PDF
+    path('estado-cuenta/',              EstadoCuentaView.as_view(),   name='estado-cuenta'),
+    path('comprobantes/<int:pk>.pdf',   ComprobantePDFView.as_view(), name='comprobante-pdf'),
 ]
