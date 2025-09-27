@@ -155,24 +155,77 @@ TEMPLATES = [
 WSGI_APPLICATION = "backend.wsgi.application"
 
 # ------------------------------------
+# DATABASES - Configuración inteligente para Supabase
+# ------------------------------------
+
+def get_database_config():
+    """
+    Configura la base de datos según el entorno y las variables disponibles
+    """
+    # Variables base
+    db_user = "postgres"
+    db_password = os.getenv("DB_PASSWORD", "Condominio123")
+    db_name = os.getenv("DB_NAME", "postgres")
+
+    # Intentar diferentes configuraciones
+    database_url = os.getenv("DATABASE_URL")
+
+    if database_url:
+        # Si existe DATABASE_URL, usarla como primera opción
+        try:
+            config = dj_database_url.parse(database_url)
+            # Agregar configuraciones específicas para Supabase
+            if "supabase" in database_url:
+                config["OPTIONS"] = {"sslmode": "require"}
+                # Si es el pooler (puerto 6543), no usar conexiones persistentes
+                if ":6543/" in database_url:
+                    config["CONN_MAX_AGE"] = 0
+                else:
+                    config["CONN_MAX_AGE"] = 600
+            return config
+        except Exception as e:
+            print(f"Error parsing DATABASE_URL: {e}")
+
+    # Fallback: configurar manualmente según variables individuales
+    db_host = os.getenv("DB_HOST")
+    db_port = os.getenv("DB_PORT")
+
+    # Si tenemos host y puerto específicos, usarlos
+    if db_host and db_port:
+        return {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': db_name,
+            'USER': db_user,
+            'PASSWORD': db_password,
+            'HOST': db_host,
+            'PORT': int(db_port),
+            'OPTIONS': {"sslmode": "require"},
+            'CONN_MAX_AGE': 0 if int(db_port) == 6543 else 600,
+        }
+
+    # Fallback final: usar configuración por defecto de desarrollo
+    return {
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': db_name,
+        'USER': db_user,
+        'PASSWORD': db_password,
+        'HOST': 'db.fbqwiducdgnfdzpgiczq.supabase.co',
+        'PORT': 5432,
+        'OPTIONS': {"sslmode": "require"},
+        'CONN_MAX_AGE': 600,
+    }
+
 DATABASES = {
-    "default": dj_database_url.config(
-        env="DATABASE_URL",
-    )
+    "default": get_database_config()
 }
 
-# Configuraciones adicionales después
-_db_url = os.getenv("DATABASE_URL", "")
-if ":6543/" in _db_url:
-    DATABASES["default"]["CONN_MAX_AGE"] = 0
-else:
-    DATABASES["default"]["CONN_MAX_AGE"] = 600
+# Logging adicional para debug de conexión en producción
+if not DEBUG:
+    import logging
+    logger = logging.getLogger(__name__)
+    db_config = DATABASES["default"]
+    logger.info(f"Database config - Host: {db_config.get('HOST', 'N/A')}, Port: {db_config.get('PORT', 'N/A')}")
 
-# SSL para Supabase
-if "supabase" in _db_url:
-    DATABASES["default"]["OPTIONS"] = {
-        "sslmode": "require"
-    }
 # ------------------------------------
 # Password validators
 # ------------------------------------
