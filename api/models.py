@@ -288,23 +288,27 @@ class Horarios(models.Model):
 
 class Reserva(models.Model):
     id = models.BigAutoField(primary_key=True, db_column="ID")
-    codigo_usuario = models.ForeignKey(
-        "Usuario", models.DO_NOTHING, null=True, blank=True,
-        db_column="CodigoUsuario", related_name="reservas"
+
+    codigousuario = models.ForeignKey(
+        "Usuario", models.DO_NOTHING,
+        db_column="CodigoUsuario", related_name="reservas",
+        null=True, blank=True
     )
-    id_area_c = models.ForeignKey(
-        "AreasComunes", models.DO_NOTHING, null=True, blank=True,
-        db_column="IdAreaC", related_name="reservas"
+    idareac = models.ForeignKey(
+        "AreasComunes", models.DO_NOTHING,
+        db_column="IdAreaC", related_name="reservas",
+        null=True, blank=True
     )
-    fecha = models.DateField(null=True, blank=True, db_column="Fecha")
-    estado = models.TextField(null=True, blank=True, db_column="Estado")
+
+    fecha = models.DateField(db_column="Fecha", null=True, blank=True)
+    horaini = models.TimeField(db_column="horaini", null=True, blank=True)
+    horafin = models.TimeField(db_column="horafin", null=True, blank=True)
+
+    estado = models.TextField(db_column="Estado", null=True, blank=True)
 
     class Meta:
         managed = False
         db_table = "Reserva"
-
-    def __str__(self):
-        return f"Reserva {self.id}"
 
 
 class Asignacion(models.Model):
