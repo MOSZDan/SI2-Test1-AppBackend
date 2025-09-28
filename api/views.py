@@ -1219,6 +1219,106 @@ class LogoutView(APIView):
             return Response({"detail": "Error durante logout"},
                             status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+# CU02. Registrarse en el sistema
+class RegisterView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        from django.db import connection
+
+        try:
+            # Cerrar cualquier conexión existente antes del registro
+            connection.close()
+
+            data = request.data.copy()
+
+            # Validaciones mínimas
+            required = ["nombre", "apellido", "correo", "contrasena"]
+            missing = [f for f in required if not data.get(f)]
+            if missing:
+                return Response(
+                    {"detail": f"Faltan campos requeridos: {', '.join(missing)}"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # ¿correo ya existe?
+            if Usuario.objects.filter(correo=data["correo"]).exists():
+                return Response(
+                    {"detail": "El correo ya está registrado."},
+                    status=status.HTTP_409_CONFLICT
+                )
+
+            # ---- Defaults solo si NO vienen desde el front ----
+            # estado: si no viene o viene vacío => "pendiente"
+            estado = (data.get("estado") or "").strip()
+            if not estado:
+                data["estado"] = "pendiente"
+
+            # idrol: si no viene => 2
+            if data.get("idrol") in [None, "", 0, "0"]:
+                data["idrol"] = 2
+            # (opcional) convertir a int si vino en string
+            try:
+                data["idrol"] = int(data["idrol"])
+            except Exception:
+                return Response({"detail": "idrol debe ser numérico."}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Crea Usuario con serializer general
+            serializer = UsuarioSerializer(data=data)
+            if not serializer.is_valid():
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+            u = serializer.save()  # Usuario creado
+
+            # Sincroniza auth.User (para emitir token y usar TokenAuth)
+            dj_user, created = User.objects.get_or_create(
+                username=u.correo,
+                defaults={"email": u.correo, "first_name": u.nombre, "last_name": u.apellido},
+            )
+            dj_user.set_password(data["contrasena"])  # hash en Django
+            dj_user.is_active = True
+            dj_user.save()
+
+            token, _ = Token.objects.get_or_create(user=dj_user)
+
+            # Info de rol (si existe)
+            rol_obj = None
+            if u.idrol_id:
+                try:
+                    r = Rol.objects.get(pk=u.idrol_id)
+                    rol_obj = {
+                        "id": r.id,
+                        "descripcion": r.descripcion,
+                        "tipo": r.tipo,
+                        "estado": r.estado,
+                    }
+                except Rol.DoesNotExist:
+                    pass
+
+            # Cerrar conexión después del registro exitoso
+            connection.close()
+
+            return Response({
+                "token": token.key,
+                "user": {
+                    "codigo": u.codigo,
+                    "nombre": u.nombre,
+                    "apellido": u.apellido,
+                    "correo": u.correo,
+                    "sexo": u.sexo,
+                    "telefono": u.telefono,
+                    "estado": u.estado,    # lo que mandó el front o "pendiente"
+                    "idrol": u.idrol_id,   # lo que mandó el front o 2
+                    "rol": rol_obj,
+                }
+            }, status=status.HTTP_201_CREATED)
+
+        except Exception as e:
+            # Cerrar conexión en caso de error
+            connection.close()
+            return Response({
+                "detail": "Error interno del servidor"
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 # Agregar estos ViewSets al final de api/views.py, después de LogoutView y antes de AIDetectionViewSet:
 
 class ReconocimientoFacialViewSet(BaseModelViewSet):
@@ -1729,7 +1829,6 @@ class EstadoCuentaView(APIView):
         props_desc = [p.codigo_propiedad.descripcion for p in pertenencias]
 
         # 4) CARGOS
-        cargos = []
 
         # a) cat. Pagos vigentes (si tu tabla Pagos no tiene 'estado', elimina el filter(estado="activo"))
         pagos_catalogo_qs = Pagos.objects.all()
@@ -1856,3 +1955,4 @@ class ComprobantePDFView(APIView):
         _bitacora(request, f"Descarga comprobante #{factura.id}")
 
         return FileResponse(buff, as_attachment=True, filename=f"comprobante_{factura.id}.pdf")
+
