@@ -36,51 +36,14 @@ if DEBUG:
     CSRF_COOKIE_SECURE = False
 else:
     # Producción: más estricto
-    CORS_ALLOW_ALL_ORIGINS = os.getenv("CORS_ALLOW_ALL_ORIGINS", "False").lower() == "true"
     CORS_ALLOWED_ORIGINS = _csv_env(
         "CORS_ALLOWED_ORIGINS",
-        ["https://si-2-test1-app.vercel.app"]
     )
     CORS_ALLOW_CREDENTIALS = True
-    ALLOWED_HOSTS = _csv_env("ALLOWED_HOSTS", ["127.0.0.1", "localhost", "si2-test1-appbackend.onrender.com"])
     SESSION_COOKIE_SAMESITE = os.getenv("SESSION_COOKIE_SAMESITE", "None")
     CSRF_COOKIE_SAMESITE = os.getenv("CSRF_COOKIE_SAMESITE", "None")
-    SESSION_COOKIE_SECURE = os.getenv("SESSION_COOKIE_SECURE", "True").lower() == "true"
-    CSRF_COOKIE_SECURE = os.getenv("CSRF_COOKIE_SECURE", "True").lower() == "true"
-
-    # Configuraciones adicionales de seguridad para producción
-    SESSION_COOKIE_HTTPONLY = os.getenv("SESSION_COOKIE_HTTPONLY", "True").lower() == "true"
-    CSRF_COOKIE_HTTPONLY = os.getenv("CSRF_COOKIE_HTTPONLY", "True").lower() == "true"
-
-    # Configuraciones SSL adicionales
-    SECURE_HSTS_SECONDS = int(os.getenv("SECURE_HSTS_SECONDS", "31536000"))
-    SECURE_HSTS_INCLUDE_SUBDOMAINS = os.getenv("SECURE_HSTS_INCLUDE_SUBDOMAINS", "True").lower() == "true"
-    SECURE_HSTS_PRELOAD = os.getenv("SECURE_HSTS_PRELOAD", "True").lower() == "true"
-    SECURE_CONTENT_TYPE_NOSNIFF = os.getenv("SECURE_CONTENT_TYPE_NOSNIFF", "True").lower() == "true"
-    SECURE_BROWSER_XSS_FILTER = os.getenv("SECURE_BROWSER_XSS_FILTER", "True").lower() == "true"
-    X_FRAME_OPTIONS = os.getenv("X_FRAME_OPTIONS", "DENY")
-
-# Configuraciones adicionales de CORS
-CORS_ALLOW_HEADERS = [
-    'accept',
-    'accept-encoding',
-    'authorization',
-    'content-type',
-    'dnt',
-    'origin',
-    'user-agent',
-    'x-csrftoken',
-    'x-requested-with',
-]
-
-CORS_ALLOW_METHODS = [
-    'DELETE',
-    'GET',
-    'OPTIONS',
-    'PATCH',
-    'POST',
-    'PUT',
-]
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
 
 CSRF_TRUSTED_ORIGINS = _csv_env(
     "CSRF_TRUSTED_ORIGINS",
@@ -91,8 +54,6 @@ CSRF_TRUSTED_ORIGINS = _csv_env(
         "http://localhost:5173",
         "http://127.0.0.1:3000",
         "http://localhost:3000",
-        "https://si-2-test1-app.vercel.app",
-        "https://si2-test1-appbackend.onrender.com",
     ]
 )
 
@@ -115,7 +76,6 @@ INSTALLED_APPS = [
     "rest_framework",
     "rest_framework.authtoken",
     "django_filters",
-    'django_extensions',
 
     "api",  # tu app
 ]
@@ -155,54 +115,26 @@ TEMPLATES = [
 WSGI_APPLICATION = "backend.wsgi.application"
 
 # ------------------------------------
-# DATABASES - Configuración para conexión directa a Supabase usando .env
+# DATABASES - Usando el enfoque de tu compañero
 # ------------------------------------
-
-def get_database_config():
-    """
-    Configura la base de datos usando Session pooler de Supabase con variables del .env
-    """
-    # Variables para Session pooler desde .env
-    db_host = os.getenv("DB_HOST", "aws-1-sa-east-1.pooler.supabase.com")
-    db_port = os.getenv("DB_PORT", "5432")
-    db_name = os.getenv("DB_NAME", "postgres")
-    db_password = os.getenv("DB_PASSWORD")
-    db_user = os.getenv("DB_USER", "postgres.fbqwiducdgnfdzpgiczq")
-
-    if not db_password:
-        raise ValueError("DB_PASSWORD es requerida en las variables de entorno")
-
-    # Configuración usando Session pooler (puerto 5432)
-    config = {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': db_name,
-        'USER': db_user,
-        'PASSWORD': db_password,
-        'HOST': db_host,
-        'PORT': int(db_port),
-        'OPTIONS': {"sslmode": "require"},
-        'CONN_MAX_AGE': 300,  # Para Session pooler, conexiones de duración media
-        'CONN_HEALTH_CHECKS': True,  # Verificar conexiones antes de usar
-    }
-
-    # Logging para debug (sin exponer credenciales)
-    if not DEBUG:
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.info(f"Using Session pooler - Host: {db_host}:{db_port}, User: {db_user[:20]}...")
-
-    return config
-
 DATABASES = {
-    "default": get_database_config()
+    "default": dj_database_url.config(
+        env="DATABASE_URL",
+    )
 }
 
-# Logging adicional para debug de conexión en producción
-if not DEBUG:
-    import logging
-    logger = logging.getLogger(__name__)
-    db_config = DATABASES["default"]
-    logger.info(f"Database config - Host: {db_config.get('HOST', 'N/A')}, Port: {db_config.get('PORT', 'N/A')}")
+# Configuraciones adicionales después
+_db_url = os.getenv("DATABASE_URL", "")
+if ":6543/" in _db_url:
+    DATABASES["default"]["CONN_MAX_AGE"] = 0
+else:
+    DATABASES["default"]["CONN_MAX_AGE"] = 600
+
+# SSL para Supabase
+if "supabase" in _db_url:
+    DATABASES["default"]["OPTIONS"] = {
+        "sslmode": "require"
+    }
 
 # ------------------------------------
 # Password validators
