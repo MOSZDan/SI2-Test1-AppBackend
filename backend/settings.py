@@ -155,44 +155,25 @@ TEMPLATES = [
 WSGI_APPLICATION = "backend.wsgi.application"
 
 # ------------------------------------
-# DATABASES - Configuración inteligente para Supabase
+# DATABASES - Configuración para usar el pooler de Supabase
 # ------------------------------------
 
 def get_database_config():
     """
-    Configura la base de datos según el entorno y las variables disponibles
+    Configura la base de datos usando variables individuales para el pooler de Supabase
     """
-    # Variables base
-    db_user = "postgres"
-    db_password = os.getenv("DB_PASSWORD", "Condominio123")
-    db_name = os.getenv("DB_NAME", "postgres")
-
-    # Intentar diferentes configuraciones
-    database_url = os.getenv("DATABASE_URL")
-
-    if database_url:
-        # Si existe DATABASE_URL, usarla como primera opción
-        try:
-            config = dj_database_url.parse(database_url)
-            # Agregar configuraciones específicas para Supabase
-            if "supabase" in database_url:
-                config["OPTIONS"] = {"sslmode": "require"}
-                # Si es el pooler (puerto 6543), no usar conexiones persistentes
-                if ":6543/" in database_url:
-                    config["CONN_MAX_AGE"] = 0
-                else:
-                    config["CONN_MAX_AGE"] = 600
-            return config
-        except Exception as e:
-            print(f"Error parsing DATABASE_URL: {e}")
-
-    # Fallback: configurar manualmente según variables individuales
+    # Usar variables individuales para el pooler
     db_host = os.getenv("DB_HOST")
     db_port = os.getenv("DB_PORT")
+    db_name = os.getenv("DB_NAME")
+    db_password = os.getenv("DB_PASSWORD")
 
-    # Si tenemos host y puerto específicos, usarlos
-    if db_host and db_port:
-        return {
+    # Usuario del pooler (format: postgres.{project_ref})
+    db_user = os.getenv("DB_USER", "postgres.fbqwiducdgnfdzpgiczq")
+
+    if db_host and db_port and db_name and db_password:
+        # Configuración principal usando variables individuales
+        config = {
             'ENGINE': 'django.db.backends.postgresql',
             'NAME': db_name,
             'USER': db_user,
@@ -200,19 +181,48 @@ def get_database_config():
             'HOST': db_host,
             'PORT': int(db_port),
             'OPTIONS': {"sslmode": "require"},
-            'CONN_MAX_AGE': 0 if int(db_port) == 6543 else 600,
+            'CONN_MAX_AGE': 0,  # Para pooler, no mantener conexiones
         }
 
-    # Fallback final: usar configuración por defecto de desarrollo
+        # Logging para debug
+        if not DEBUG:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"Using pooler connection - Host: {db_host}:{db_port}, User: {db_user}")
+
+        return config
+
+    # Fallback: intentar usar DATABASE_URL
+    database_url = os.getenv("DATABASE_URL")
+    if database_url:
+        try:
+            config = dj_database_url.parse(database_url)
+            config["OPTIONS"] = {"sslmode": "require"}
+            # Si es el pooler (puerto 6543), no usar conexiones persistentes
+            if ":6543/" in database_url:
+                config["CONN_MAX_AGE"] = 0
+            else:
+                config["CONN_MAX_AGE"] = 600
+
+            if not DEBUG:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.info(f"Using DATABASE_URL fallback")
+
+            return config
+        except Exception as e:
+            print(f"Error parsing DATABASE_URL: {e}")
+
+    # Fallback final: configuración por defecto para desarrollo
     return {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': db_name,
-        'USER': db_user,
-        'PASSWORD': db_password,
-        'HOST': 'db.fbqwiducdgnfdzpgiczq.supabase.co',
-        'PORT': 5432,
+        'NAME': 'postgres',
+        'USER': 'postgres.fbqwiducdgnfdzpgiczq',
+        'PASSWORD': 'yOsOYsUPABASE!',
+        'HOST': 'aws-1-sa-east-1.pooler.supabase.com',
+        'PORT': 6543,
         'OPTIONS': {"sslmode": "require"},
-        'CONN_MAX_AGE': 600,
+        'CONN_MAX_AGE': 0,
     }
 
 DATABASES = {
