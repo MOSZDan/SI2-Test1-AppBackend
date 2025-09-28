@@ -6,6 +6,7 @@ from pathlib import Path
 import os
 from dotenv import load_dotenv
 import dj_database_url
+import logging
 
 # ------------------------------------
 # Paths / .env
@@ -288,16 +289,22 @@ EMAIL_USE_SSL = os.getenv("EMAIL_USE_SSL", "False") == "True"
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
-    "formatters": {
-        "verbose": {"format": "{levelname} {asctime} {module} {message}", "style": "{"},
-    },
     "handlers": {
-        "console": {"class": "logging.StreamHandler", "formatter": "verbose"},
+        "console": {
+            "class": "logging.StreamHandler",
+        },
     },
-    "root": {"handlers": ["console"], "level": "INFO"},
+    "root": {
+        "handlers": ["console"],
+        "level": "INFO",  # Cambia a "DEBUG" si quieres más detalle
+    },
     "loggers": {
-        "django": {"handlers": ["console"], "level": "INFO", "propagate": False},
-        "api": {"handlers": ["console"], "level": "DEBUG", "propagate": False},
+        "django": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": True,
+        },
+        # Puedes agregar más loggers específicos si lo necesitas
     },
 }
 
