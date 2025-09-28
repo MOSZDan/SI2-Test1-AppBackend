@@ -108,7 +108,6 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
-    "api.close_connection_middleware.ForceConnectionCloseMiddleware",  # Para transaction pooler
 ]
 
 ROOT_URLCONF = "backend.urls"
@@ -131,7 +130,7 @@ TEMPLATES = [
 WSGI_APPLICATION = "backend.wsgi.application"
 
 # ------------------------------------
-# DATABASES - Configuración simple para Transaction Pooler
+# DATABASES - Configuración simplificada para Supabase
 # ------------------------------------
 DATABASES = {
     "default": dj_database_url.config(
@@ -142,20 +141,14 @@ DATABASES = {
 # Configuraciones adicionales después
 _db_url = os.getenv("DATABASE_URL", "")
 if ":6543/" in _db_url:
-    # Transaction pooler (puerto 6543) - sin conexiones persistentes
     DATABASES["default"]["CONN_MAX_AGE"] = 0
-elif ":5432/" in _db_url:
-    # Session pooler (puerto 5432) - conexiones de duración media
-    DATABASES["default"]["CONN_MAX_AGE"] = 300
 else:
-    # Conexión directa - conexiones persistentes
     DATABASES["default"]["CONN_MAX_AGE"] = 600
 
 # SSL para Supabase
 if "supabase" in _db_url:
     DATABASES["default"]["OPTIONS"] = {
-        "sslmode": "require",
-        "connect_timeout": 15,  # Más tiempo para conectar
+        "sslmode": "require"
     }
 
 # ------------------------------------
