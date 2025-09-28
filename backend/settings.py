@@ -199,25 +199,25 @@ TEMPLATES = [
 WSGI_APPLICATION = "backend.wsgi.application"
 
 # ------------------------------------
-# DATABASES - Configuración simplificada para Supabase
+# DATABASES - Configuración para Supabase con Transaction Pooler
 # ------------------------------------
 DATABASES = {
     "default": dj_database_url.config(
         env="DATABASE_URL",
+        # Para transaction pooler, no usar pooling persistente
+        conn_max_age=0,
+        ssl_require=True,
     )
 }
 
-# Configuraciones adicionales después
+# Configuración SSL específica para Supabase
 _db_url = os.getenv("DATABASE_URL", "")
-if ":6543/" in _db_url:
-    # pgbouncer en Supabase (transaction pooling)
-    DATABASES["default"]["CONN_MAX_AGE"] = 0
-else:
-    DATABASES["default"]["CONN_MAX_AGE"] = 600
-
-# SSL para Supabase
 if "supabase" in _db_url:
     DATABASES["default"]["OPTIONS"] = {"sslmode": "require"}
+
+# Si usa pooler (puerto 6543), desactivar pooling
+if ":6543" in _db_url:
+    DATABASES["default"]["CONN_MAX_AGE"] = 0
 
 # ------------------------------------
 # Password validators

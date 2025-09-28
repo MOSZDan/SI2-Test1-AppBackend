@@ -8,10 +8,12 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, permissions
 from django.contrib.auth.models import User
+from django.contrib.auth import authenticate  # Añadir esta importación
 from rest_framework.authtoken.models import Token
 from rest_framework.decorators import action
 from django.utils import timezone
 from datetime import timedelta
+from django.db import transaction, IntegrityError, DatabaseError  # Añadir estas importaciones
 from .services.ai_detection import FacialRecognitionService, PlateDetectionService
 from .services.supabase_storage import SupabaseStorageService
 import logging
@@ -1115,46 +1117,36 @@ class BitacoraViewSet(BaseModelViewSet):
 
 # CU01. Iniciar sesion
 class LoginView(APIView):
-    permission_classes = [permissions.AllowAny]  # sin auth para poder loguear
+    permission_classes = [permissions.AllowAny]
 
     def post(self, request):
-        from django.db import connection
+        email = (request.data.get("email") or "").strip().lower()
+        password = request.data.get("password")
 
+        if not email or not password:
+            return Response({"detail": "Email y contraseña son requeridos"},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        # Usar authenticate de Django (más seguro y robusto)
+        user = authenticate(username=email, password=password)
+        if not user:
+            return Response({"detail": "Credenciales inválidas"}, status=status.HTTP_401_UNAUTHORIZED)
+
+        if not user.is_active:
+            return Response({"detail": "Cuenta desactivada"}, status=status.HTTP_401_UNAUTHORIZED)
+
+        # Crear/obtener token
+        token, _ = Token.objects.get_or_create(user=user)
+
+        # Buscar datos adicionales del usuario en tu tabla
         try:
-            # Cerrar cualquier conexión existente antes del login
-            connection.close()
+            usuario = Usuario.objects.get(correo=email)
 
-            email = request.data.get("email")
-            password = request.data.get("password")
-
-            if not email or not password:
-                return Response({"detail": "email y password son requeridos."},
-                                status=status.HTTP_400_BAD_REQUEST)
-
-            # 1) Buscar en TU tabla Usuario
-            try:
-                u = Usuario.objects.get(correo=email)
-            except Usuario.DoesNotExist:
-                return Response({"detail": "Usuario no existe."}, status=status.HTTP_404_NOT_FOUND)
-
-            # 2) Comparación simple (demo). En prod: NO uses texto plano.
-            if u.contrasena != password:
-                return Response({"detail": "Credenciales inválidas."}, status=status.HTTP_401_UNAUTHORIZED)
-
-            # 3) Sincronizar/crear auth.User para usar TokenAuth
-            dj_user, _ = User.objects.get_or_create(username=email, defaults={"email": email})
-            if not dj_user.has_usable_password() or not dj_user.check_password(password):
-                dj_user.set_password(password)
-                dj_user.save()
-
-            # 4) Crear/obtener token
-            token, _ = Token.objects.get_or_create(user=dj_user)
-
-            # 5) Armar payload con datos del usuario (y rol)
+            # Armar payload con datos del usuario y rol
             rol_obj = None
-            if u.idrol_id:
+            if usuario.idrol_id:
                 try:
-                    r = Rol.objects.get(pk=u.idrol_id)
+                    r = Rol.objects.get(pk=usuario.idrol_id)
                     rol_obj = {
                         "id": r.id,
                         "descripcion": r.descripcion,
@@ -1164,58 +1156,48 @@ class LoginView(APIView):
                 except Rol.DoesNotExist:
                     pass
 
-            # Cerrar conexión después del login exitoso
-            connection.close()
-
             return Response({
+                "ok": True,
+                "message": "Login exitoso",
                 "token": token.key,
                 "user": {
-                    "codigo": u.codigo,
-                    "nombre": u.nombre,
-                    "apellido": u.apellido,
-                    "correo": u.correo,
-                    "sexo": u.sexo,
-                    "telefono": u.telefono,
-                    "estado": u.estado,
-                    "idrol": u.idrol_id,
+                    "id": user.id,
+                    "email": user.email,
+                    "first_name": user.first_name,
+                    "last_name": user.last_name,
+                    "is_active": user.is_active,
+                },
+                "usuario": {
+                    "codigo": usuario.codigo,
+                    "nombre": usuario.nombre,
+                    "apellido": usuario.apellido,
+                    "correo": usuario.correo,
+                    "sexo": usuario.sexo,
+                    "telefono": usuario.telefono,
+                    "estado": usuario.estado,
+                    "idrol": usuario.idrol_id,
                     "rol": rol_obj,
                 }
             }, status=status.HTTP_200_OK)
 
-        except Exception as e:
-            # Cerrar conexión en caso de error
-            connection.close()
-            return Response({
-                "detail": "Error interno del servidor"
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
+        except Usuario.DoesNotExist:
+            return Response({"detail": "Usuario no encontrado en el sistema"}, status=status.HTTP_404_NOT_FOUND)
 # CU03. Cerrar sesión
 class LogoutView(APIView):
     permission_classes = [permissions.IsAuthenticated]  # requiere estar autenticado
 
     def post(self, request):
-        from django.db import connection
-
         try:
-            # Cerrar conexión antes del logout
-            connection.close()
-
             # Obtener y eliminar el token del usuario actual
             token = Token.objects.get(user=request.user)
             token.delete()
 
-            # Cerrar conexión después del logout
-            connection.close()
-
             return Response({"message": "Sesión cerrada exitosamente"},
                             status=status.HTTP_200_OK)
         except Token.DoesNotExist:
-            connection.close()
             return Response({"detail": "Token no encontrado"},
                             status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
-            # Cerrar conexión en caso de cualquier error
-            connection.close()
             return Response({"detail": "Error durante logout"},
                             status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
@@ -1955,4 +1937,3 @@ class ComprobantePDFView(APIView):
         _bitacora(request, f"Descarga comprobante #{factura.id}")
 
         return FileResponse(buff, as_attachment=True, filename=f"comprobante_{factura.id}.pdf")
-
