@@ -204,9 +204,6 @@ WSGI_APPLICATION = "backend.wsgi.application"
 DATABASES = {
     "default": dj_database_url.config(
         env="DATABASE_URL",
-        # Para transaction pooler, no usar pooling persistente
-        conn_max_age=0,
-        ssl_require=True,
     )
 }
 
