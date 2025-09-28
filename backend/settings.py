@@ -142,10 +142,10 @@ DATABASES = {
 _db_url = os.getenv("DATABASE_URL", "")
 if ":6543/" in _db_url:
     # Session pooler (puerto 5432) - conexiones de duración media
-    DATABASES["default"]["CONN_MAX_AGE"] = 300
+    DATABASES["default"]["CONN_MAX_AGE"] = 0
 elif ":5432/" in _db_url:
     # Transaction pooler (puerto 6543) - sin conexiones persistentes
-    DATABASES["default"]["CONN_MAX_AGE"] = 0
+    DATABASES["default"]["CONN_MAX_AGE"] = 300
 else:
     # Conexión directa - conexiones persistentes
     DATABASES["default"]["CONN_MAX_AGE"] = 600
