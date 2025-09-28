@@ -684,28 +684,21 @@ class RegisterView(APIView):
             }
         }, status=status.HTTP_201_CREATED)
 
-# CU04. Cierre de sesion
+# CU03. Cerrar sesión
 class LogoutView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated]  # requiere estar autenticado
 
     def post(self, request):
-        # Si el cliente envía Authorization: Token <...>, DRF pone el token en request.auth
-        all_sessions = bool(request.data.get("all", False))
+        try:
+            # Obtener y eliminar el token del usuario actual
+            token = Token.objects.get(user=request.user)
+            token.delete()
 
-        if all_sessions:
-            Token.objects.filter(user=request.user).delete()
-            detail = "Sesiones cerradas en todos los dispositivos."
-        else:
-            # Borra SOLO el token de esta sesión
-            try:
-                if request.auth:
-                    request.auth.delete()
-            except Exception:
-                # si ya estaba borrado/no válido, seguimos devolviendo 200 para idempotencia
-                pass
-            detail = "Sesión cerrada."
-
-        return Response({"detail": detail}, status=status.HTTP_200_OK)
+            return Response({"message": "Sesión cerrada exitosamente"},
+                            status=status.HTTP_200_OK)
+        except Token.DoesNotExist:
+            return Response({"detail": "Token no encontrado"},
+                            status=status.HTTP_400_BAD_REQUEST)
 
 # Agregar estos ViewSets al final de api/views.py, después de LogoutView y antes de AIDetectionViewSet:
 
