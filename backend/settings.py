@@ -155,75 +155,43 @@ TEMPLATES = [
 WSGI_APPLICATION = "backend.wsgi.application"
 
 # ------------------------------------
-# DATABASES - Configuración para usar el pooler de Supabase
+# DATABASES - Configuración para conexión directa a Supabase usando .env
 # ------------------------------------
 
 def get_database_config():
     """
-    Configura la base de datos usando variables individuales para el pooler de Supabase
+    Configura la base de datos usando Session pooler de Supabase con variables del .env
     """
-    # Usar variables individuales para el pooler
-    db_host = os.getenv("DB_HOST")
-    db_port = os.getenv("DB_PORT")
-    db_name = os.getenv("DB_NAME")
+    # Variables para Session pooler desde .env
+    db_host = os.getenv("DB_HOST", "aws-1-sa-east-1.pooler.supabase.com")
+    db_port = os.getenv("DB_PORT", "5432")
+    db_name = os.getenv("DB_NAME", "postgres")
     db_password = os.getenv("DB_PASSWORD")
-
-    # Usuario del pooler (format: postgres.{project_ref})
     db_user = os.getenv("DB_USER", "postgres.fbqwiducdgnfdzpgiczq")
 
-    if db_host and db_port and db_name and db_password:
-        # Configuración principal usando variables individuales
-        config = {
-            'ENGINE': 'django.db.backends.postgresql',
-            'NAME': db_name,
-            'USER': db_user,
-            'PASSWORD': db_password,
-            'HOST': db_host,
-            'PORT': int(db_port),
-            'OPTIONS': {"sslmode": "require"},
-            'CONN_MAX_AGE': 0,  # Para pooler, no mantener conexiones
-        }
+    if not db_password:
+        raise ValueError("DB_PASSWORD es requerida en las variables de entorno")
 
-        # Logging para debug
-        if not DEBUG:
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.info(f"Using pooler connection - Host: {db_host}:{db_port}, User: {db_user}")
-
-        return config
-
-    # Fallback: intentar usar DATABASE_URL
-    database_url = os.getenv("DATABASE_URL")
-    if database_url:
-        try:
-            config = dj_database_url.parse(database_url)
-            config["OPTIONS"] = {"sslmode": "require"}
-            # Si es el pooler (puerto 6543), no usar conexiones persistentes
-            if ":6543/" in database_url:
-                config["CONN_MAX_AGE"] = 0
-            else:
-                config["CONN_MAX_AGE"] = 600
-
-            if not DEBUG:
-                import logging
-                logger = logging.getLogger(__name__)
-                logger.info(f"Using DATABASE_URL fallback")
-
-            return config
-        except Exception as e:
-            print(f"Error parsing DATABASE_URL: {e}")
-
-    # Fallback final: configuración por defecto para desarrollo
-    return {
+    # Configuración usando Session pooler (puerto 5432)
+    config = {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'postgres',
-        'USER': 'postgres.fbqwiducdgnfdzpgiczq',
-        'PASSWORD': 'yOsOYsUPABASE!',
-        'HOST': 'aws-1-sa-east-1.pooler.supabase.com',
-        'PORT': 6543,
+        'NAME': db_name,
+        'USER': db_user,
+        'PASSWORD': db_password,
+        'HOST': db_host,
+        'PORT': int(db_port),
         'OPTIONS': {"sslmode": "require"},
-        'CONN_MAX_AGE': 0,
+        'CONN_MAX_AGE': 300,  # Para Session pooler, conexiones de duración media
+        'CONN_HEALTH_CHECKS': True,  # Verificar conexiones antes de usar
     }
+
+    # Logging para debug (sin exponer credenciales)
+    if not DEBUG:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"Using Session pooler - Host: {db_host}:{db_port}, User: {db_user[:20]}...")
+
+    return config
 
 DATABASES = {
     "default": get_database_config()
