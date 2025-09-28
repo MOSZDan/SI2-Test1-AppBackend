@@ -35,7 +35,6 @@ class MultaSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Multa
-        # Si tu modelo tiene 'estado', inclúyelo; si no, omítelo.
         fields = ("id", "descripcion", "monto", "estado") if hasattr(Multa, "estado") else ("id", "descripcion", "monto")
 
     def validate_descripcion(self, value):
@@ -54,14 +53,11 @@ class MultaSerializer(serializers.ModelSerializer):
         return value
 
 
-
-
 class PagoSerializer(serializers.ModelSerializer):
     monto = serializers.DecimalField(max_digits=12, decimal_places=2, coerce_to_string=False)
 
     class Meta:
         model = Pagos
-        # Si tu modelo tiene 'estado', déjalo en fields; si no, quítalo sin problema.
         fields = ("id", "tipo", "descripcion", "monto", "estado") if hasattr(Pagos, "estado") else ("id", "tipo", "descripcion", "monto")
 
     def validate(self, attrs):
@@ -77,12 +73,14 @@ class PagoSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"monto": "El monto debe ser mayor a 0."})
         return attrs
 
+
 class CargoSerializer(serializers.Serializer):
     tipo = serializers.CharField()
     descripcion = serializers.CharField()
     monto = serializers.DecimalField(max_digits=12, decimal_places=2, coerce_to_string=False)
-    origen = serializers.CharField()  # 'pago' (expensa/servicio) | 'multa'
+    origen = serializers.CharField()  # 'pago' | 'multa'
     fecha = serializers.DateField(required=False, allow_null=True)
+
 
 class NotificacionesSerializer(serializers.ModelSerializer):
     class Meta:
@@ -91,9 +89,38 @@ class NotificacionesSerializer(serializers.ModelSerializer):
 
 
 class AreasComunesSerializer(serializers.ModelSerializer):
+    costo = serializers.DecimalField(
+        max_digits=12, decimal_places=2,
+        coerce_to_string=False, required=True
+    )
+
     class Meta:
         model = AreasComunes
         fields = "__all__"
+
+    def validate(self, attrs):
+        desc = (attrs.get("descripcion")
+                if "descripcion" in attrs
+                else getattr(self.instance, "descripcion", "")) or ""
+        if not desc.strip():
+            raise serializers.ValidationError({"descripcion": "La descripción es obligatoria."})
+
+        costo = attrs.get("costo") if "costo" in attrs else getattr(self.instance, "costo", None
+        )
+        if costo is None or costo < 0:
+            raise serializers.ValidationError({"costo": "El costo debe ser mayor o igual a 0."})
+
+        cap = attrs.get("capacidad_max") if "capacidad_max" in attrs else getattr(self.instance, "capacidad_max", None)
+        if cap is None or cap <= 0:
+            raise serializers.ValidationError({"capacidad_max": "El aforo debe ser mayor a 0."})
+
+        estado = (attrs.get("estado")
+                  if "estado" in attrs
+                  else getattr(self.instance, "estado", "")) or ""
+        estado = estado.strip().lower()
+        if estado and estado not in ("activo", "inactivo", "mantenimiento"):
+            raise serializers.ValidationError({"estado": "Estado inválido. Use activo / inactivo / mantenimiento."})
+        return attrs
 
 
 class TareasSerializer(serializers.ModelSerializer):
@@ -149,6 +176,26 @@ class HorariosSerializer(serializers.ModelSerializer):
         model = Horarios
         fields = "__all__"
 
+    def validate(self, attrs):
+        area = attrs.get("id_area_c") if "id_area_c" in attrs else getattr(self.instance, "id_area_c", None)
+        h_ini = attrs.get("hora_ini") if "hora_ini" in attrs else getattr(self.instance, "hora_ini", None)
+        h_fin = attrs.get("hora_fin") if "hora_fin" in attrs else getattr(self.instance, "hora_fin", None)
+
+        if area is None:
+            raise serializers.ValidationError({"id_area_c": "El área es obligatoria."})
+        if h_ini is None or h_fin is None:
+            raise serializers.ValidationError({"hora_ini": "Rango horario obligatorio.", "hora_fin": "Rango horario obligatorio."})
+        if h_fin <= h_ini:
+            raise serializers.ValidationError({"hora_fin": "HoraFin debe ser estrictamente mayor que HoraIni."})
+
+        qs = Horarios.objects.filter(id_area_c=area)
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+        conflict = qs.filter(hora_ini__lt=h_fin, hora_fin__gt=h_ini).exists()
+        if conflict:
+            raise serializers.ValidationError("El intervalo se solapa con otro horario existente de esta área.")
+        return attrs
+
 
 class ReservaSerializer(serializers.ModelSerializer):
     class Meta:
@@ -180,7 +227,7 @@ class BitacoraSerializer(serializers.ModelSerializer):
         fields = "__all__"
 
 
-# Agregar al final de api/serializers.py
+# ---- Reconocimiento/Perfiles/Placas ----
 
 class PerfilFacialSerializer(serializers.ModelSerializer):
     usuario_nombre = serializers.SerializerMethodField()
@@ -222,10 +269,12 @@ class DeteccionPlacaSerializer(serializers.ModelSerializer):
             }
         return None
 
+
+# ---- Pagos realizados / Estado de cuenta ----
+
 class PagoRealizadoSerializer(serializers.ModelSerializer):
     """
     Composición Factura + concepto de Pagos.
-    Lee de Factura y expone campos amigables para el front.
     """
     id = serializers.IntegerField(read_only=True)
     concepto = serializers.CharField(source="id_pago.descripcion", read_only=True)
@@ -243,15 +292,74 @@ class PagoRealizadoSerializer(serializers.ModelSerializer):
         model = Factura
         fields = ("id", "concepto", "monto", "fecha", "hora", "tipo_pago", "estado")
 
+
 class EstadoCuentaSerializer(serializers.Serializer):
     mes = serializers.CharField()
-    propiedades = serializers.ListField(child=serializers.CharField())  # descripciones
+    propiedades = serializers.ListField(child=serializers.CharField())
     cargos = CargoSerializer(many=True)
     pagos = PagoRealizadoSerializer(many=True)
-    totales = serializers.DictField()  # {'cargos': ..., 'pagos': ..., 'saldo': ...}
+    totales = serializers.DictField()
     mensaje = serializers.CharField(allow_blank=True)
+
 
 class ReporteSeguridadSerializer(serializers.ModelSerializer):
     class Meta:
         model = ReporteSeguridad
         fields = "__all__"
+
+
+# ---- Publicar comunicados ----
+
+class PublicarComunicadoSerializer(serializers.Serializer):
+    titulo = serializers.CharField(max_length=500)
+    contenido = serializers.CharField()
+    prioridad = serializers.ChoiceField(choices=["normal", "importante", "urgente"])
+    destinatarios = serializers.ChoiceField(
+        choices=["todos", "copropietarios", "inquilinos", "personal", "usuarios"],
+        required=True
+    )
+    usuario_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        required=False,
+        allow_empty=False
+    )
+    fecha_publicacion = serializers.DateField(required=False)
+    hora_publicacion = serializers.TimeField(required=False)
+
+    def validate(self, data):
+        dest = data.get("destinatarios")
+        if dest == "usuarios" and not data.get("usuario_ids"):
+            raise serializers.ValidationError({"usuario_ids": "Requerido cuando destinatarios=usuarios"})
+        return data
+
+
+# ====== Reservas: payloads específicos ======
+
+class ReservaCreateSerializer(serializers.Serializer):
+    """
+    Payload para crear una reserva.
+    """
+    idareac = serializers.IntegerField()
+    fecha = serializers.DateField()
+    hora_ini = serializers.TimeField()
+    hora_fin = serializers.TimeField()
+
+    def validate(self, data):
+        if data["hora_fin"] <= data["hora_ini"]:
+            raise serializers.ValidationError({"hora_fin": "Hora fin debe ser mayor que hora inicio."})
+        return data
+
+
+class ReservaCancelarSerializer(serializers.Serializer):
+    motivo = serializers.CharField(required=False, allow_blank=True)
+
+
+class ReservaReprogramarSerializer(serializers.Serializer):
+    fecha = serializers.DateField()
+    hora_ini = serializers.TimeField()
+    hora_fin = serializers.TimeField()
+
+    def validate(self, data):
+        if data["hora_fin"] <= data["hora_ini"]:
+            raise serializers.ValidationError({"hora_fin": "Hora fin debe ser mayor que hora inicio."})
+        return data

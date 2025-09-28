@@ -1,5 +1,4 @@
 from decimal import Decimal
-
 from django.http import FileResponse, Http404
 from rest_framework import viewsets, permissions
 from django_filters.rest_framework import DjangoFilterBackend
@@ -28,6 +27,7 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 from datetime import datetime, timedelta
 from django.db.models import Q, Sum
+from .services.avisos import publicar_comunicado_y_notificar
 
 from .models import (
     Rol, Usuario, Propiedad, Multa, Pagos, Notificaciones, AreasComunes, Tareas,
@@ -42,7 +42,8 @@ from .serializers import (
     FacturaSerializer, FinanzasSerializer, ComunicadosSerializer, HorariosSerializer,
     ReservaSerializer, AsignacionSerializer, EnvioSerializer, RegistroSerializer,
     BitacoraSerializer, ReconocimientoFacialSerializer, PerfilFacialSerializer, DeteccionPlacaSerializer,
-    ReporteSeguridadSerializer, EstadoCuentaSerializer, PagoRealizadoSerializer
+    ReporteSeguridadSerializer, EstadoCuentaSerializer, PagoRealizadoSerializer,
+    PublicarComunicadoSerializer, ReservaCreateSerializer, ReservaCancelarSerializer, ReservaReprogramarSerializer,
 )
 
 
@@ -296,10 +297,162 @@ class NotificacionesViewSet(BaseModelViewSet):
 class AreasComunesViewSet(BaseModelViewSet):
     queryset = AreasComunes.objects.all().order_by('id')
     serializer_class = AreasComunesSerializer
-    filterset_fields = ['estado', 'capacidadmax', 'costo']
+    filterset_fields = ['estado', 'capacidad_max', 'costo']
     search_fields = ['descripcion', 'estado']
-    ordering_fields = ['id', 'capacidadmax', 'costo']
+    ordering_fields = ['id', 'capacidad_max', 'costo']
 
+    def perform_create(self, serializer):
+        area = serializer.save()
+        # bitácora
+        try:
+            u = Usuario.objects.get(correo=self.request.user.email)
+            Bitacora.objects.create(
+                codigo_usuario=u,
+                accion=f"Alta área común #{area.id} ({area.descripcion})",
+                fecha=timezone.now().date(),
+                hora=timezone.now().time(),
+                ip=self._get_client_ip(self.request),
+            )
+        except Usuario.DoesNotExist:
+            pass
+
+    def perform_update(self, serializer):
+        before = self.get_object()
+        was_active = (before.estado or "").strip().lower() == "activo"
+        area = serializer.save()
+        # bitácora
+        try:
+            u = Usuario.objects.get(correo=self.request.user.email)
+            Bitacora.objects.create(
+                codigo_usuario=u,
+                accion=f"Edición área común #{area.id} ({area.descripcion})",
+                fecha=timezone.now().date(),
+                hora=timezone.now().time(),
+                ip=self._get_client_ip(self.request),
+            )
+        except Usuario.DoesNotExist:
+            pass
+
+        # Si la dejas inactiva/mantenimiento, advertimos si hay reservas futuras
+        now_d = timezone.now().date()
+        new_state = (area.estado or "").strip().lower()
+        if new_state in ("inactivo", "mantenimiento") and was_active:
+            afectadas = Reserva.objects.filter(id_area_c=area, fecha__gte=now_d).count()
+            # No bloqueamos, solo avisamos en el payload de respuesta
+            self.extra_warning = f"Área deshabilitada. Hay {afectadas} reserva(s) futura(s) que deberías revisar." if afectadas else None
+
+    def update(self, request, *args, **kwargs):
+        resp = super().update(request, *args, **kwargs)
+        if hasattr(self, "extra_warning") and self.extra_warning:
+            data = resp.data.copy()
+            data["_warning"] = self.extra_warning
+            return Response(data, status=resp.status_code)
+        return resp
+
+    def _get_client_ip(self, request):
+        xf = request.META.get("HTTP_X_FORWARDED_FOR")
+        return xf.split(",")[0] if xf else request.META.get("REMOTE_ADDR")
+
+    # ---------- Acciones útiles sobre horarios del área ----------
+
+    @action(detail=True, methods=['get'], url_path='horarios')
+    def listar_horarios(self, request, pk=None):
+        area = self.get_object()
+        qs = Horarios.objects.filter(id_area_c=area).order_by('hora_ini')
+        return Response(HorariosSerializer(qs, many=True).data, status=200)
+
+    @action(detail=True, methods=['post'], url_path='horarios/agregar')
+    def agregar_horario(self, request, pk=None):
+        """
+        Agrega UNA franja a esta área. Body:
+        {
+          "hora_ini": "09:00:00",
+          "hora_fin": "10:00:00"
+        }
+        """
+        area = self.get_object()
+        data = request.data.copy()
+        data["id_area_c"] = area.id
+        ser = HorariosSerializer(data=data)
+        ser.is_valid(raise_exception=True)
+        item = ser.save()
+        # bitácora
+        try:
+            u = Usuario.objects.get(correo=request.user.email)
+            Bitacora.objects.create(
+                codigo_usuario=u,
+                accion=f"Alta horario {item.hora_ini}-{item.hora_fin} para área #{area.id}",
+                fecha=timezone.now().date(),
+                hora=timezone.now().time(),
+                ip=self._get_client_ip(request),
+            )
+        except Usuario.DoesNotExist:
+            pass
+        return Response(ser.data, status=201)
+
+    @action(detail=True, methods=['post'], url_path='horarios/set')
+    def set_horarios(self, request, pk=None):
+        """
+        Bulk ADD (no reemplaza). Body:
+        {
+          "intervalos": [
+            {"hora_ini": "09:00:00", "hora_fin": "10:00:00"},
+            {"hora_ini": "10:00:00", "hora_fin": "11:00:00"}
+          ]
+        }
+        Valida solapes con existentes y entre sí.
+        """
+        area = self.get_object()
+        intervalos = request.data.get("intervalos") or []
+        if not isinstance(intervalos, list) or not intervalos:
+            return Response({"detail": "intervalos debe ser una lista no vacía."}, status=400)
+
+        # Validar entre sí
+        def to_tuple(x):
+            return x["hora_ini"], x["hora_fin"]
+        try:
+            new_sorted = sorted(intervalos, key=lambda x: x["hora_ini"])
+            for i in range(len(new_sorted)):
+                a_ini, a_fin = to_tuple(new_sorted[i])
+                if a_fin <= a_ini:
+                    return Response({"detail": f"Intervalo inválido: {a_ini}-{a_fin}."}, status=400)
+                for j in range(i+1, len(new_sorted)):
+                    b_ini, b_fin = to_tuple(new_sorted[j])
+                    # solape si a_ini < b_fin y a_fin > b_ini
+                    if a_ini < b_fin and a_fin > b_ini:
+                        return Response({"detail": f"Solape entre {a_ini}-{a_fin} y {b_ini}-{b_fin}."}, status=400)
+        except Exception:
+            return Response({"detail": "Formato de intervalos inválido (use 'HH:MM:SS')."}, status=400)
+
+        # Validar contra existentes y persistir
+        creados = []
+        with transaction.atomic():
+            existentes = Horarios.objects.filter(id_area_c=area)
+            for it in new_sorted:
+                h_ini = it["hora_ini"]
+                h_fin = it["hora_fin"]
+                conflict = existentes.filter(hora_ini__lt=h_fin, hora_fin__gt=h_ini).exists()
+                if conflict:
+                    raise IntegrityError(f"Solape con horario existente para {h_ini}-{h_fin}.")
+                ser = HorariosSerializer(data={"id_area_c": area.id, "hora_ini": h_ini, "hora_fin": h_fin})
+                ser.is_valid(raise_exception=True)
+                item = ser.save()
+                creados.append(item)
+
+        # bitácora
+        try:
+            u = Usuario.objects.get(correo=request.user.email)
+            Bitacora.objects.create(
+                codigo_usuario=u,
+                accion=f"Alta masiva de {len(creados)} horario(s) para área #{area.id}",
+                fecha=timezone.now().date(),
+                hora=timezone.now().time(),
+                ip=self._get_client_ip(request),
+            )
+        except Usuario.DoesNotExist:
+            pass
+
+        return Response(HorariosSerializer(creados, many=True).data, status=201)
 
 class TareasViewSet(BaseModelViewSet):
     queryset = Tareas.objects.all().order_by('id')
@@ -486,27 +639,448 @@ class FinanzasViewSet(BaseModelViewSet):
 class ComunicadosViewSet(BaseModelViewSet):
     queryset = Comunicados.objects.all().order_by('id')
     serializer_class = ComunicadosSerializer
-    filterset_fields = ['tipo', 'fecha', 'estado', 'codigousuario']
+    # OJO: el campo es 'codigo_usuario' (tu modelo), no 'codigousuario'
+    filterset_fields = ['tipo', 'fecha', 'estado', 'codigo_usuario']
     search_fields = ['titulo', 'contenido', 'url', 'tipo', 'estado']
     ordering_fields = ['id', 'fecha']
+
+    @action(detail=False, methods=['post'], url_path='publicar', permission_classes=[IsAuthenticated])
+    def publicar(self, request):
+        s = PublicarComunicadoSerializer(data=request.data)
+        s.is_valid(raise_exception=True)
+        data = s.validated_data
+
+        # Admin por email autenticado
+        try:
+            admin = Usuario.objects.get(correo=request.user.email)
+        except Usuario.DoesNotExist:
+            return Response({"detail": "Admin no encontrado"}, status=404)
+
+        now = timezone.localtime()
+        fecha_pub = data.get("fecha_publicacion") or now.date()
+        hora_pub  = data.get("hora_publicacion")  or now.time()
+
+        try:
+            comunicado, stats = publicar_comunicado_y_notificar(
+                admin=admin,
+                titulo=data["titulo"],
+                contenido=data["contenido"],
+                prioridad=data["prioridad"],
+                destinatarios=data["destinatarios"],  # incluye "todos"
+                fecha_pub=fecha_pub,
+                hora_pub=hora_pub,
+                usuario_ids=data.get("usuario_ids"),
+            )
+        except Exception as e:
+            return Response({"detail": "Error al publicar en la base de datos.", "error": str(e)},
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        body = {
+            "comunicado": ComunicadosSerializer(comunicado).data,
+            "envio": stats,
+            "mensaje": "Publicado y notificado." if stats["errores"] == 0 else
+                       "Publicado con errores de envío.",
+        }
+        return Response(body, status=200)
 
 
 class HorariosViewSet(BaseModelViewSet):
     queryset = Horarios.objects.all().order_by('id')
     serializer_class = HorariosSerializer
-    filterset_fields = ['idareac', 'horaini', 'horafin']
+    filterset_fields = ['id_area_c', 'hora_ini', 'hora_fin']
     search_fields = []
-    ordering_fields = ['id', 'horaini', 'horafin']
+    ordering_fields = ['id', 'hora_ini', 'hora_fin']
 
+    def perform_create(self, serializer):
+        item = serializer.save()
+        try:
+            u = Usuario.objects.get(correo=self.request.user.email)
+            Bitacora.objects.create(
+                codigo_usuario=u,
+                accion=f"Alta horario {item.hora_ini}-{item.hora_fin} en área #{item.id_area_c_id}",
+                fecha=timezone.now().date(),
+                hora=timezone.now().time(),
+                ip=self._get_client_ip(self.request),
+            )
+        except Usuario.DoesNotExist:
+            pass
 
-class ReservaViewSet(BaseModelViewSet):
-    queryset = Reserva.objects.all().order_by('id')
+    def perform_update(self, serializer):
+        before = self.get_object()
+        item = serializer.save()
+        try:
+            u = Usuario.objects.get(correo=self.request.user.email)
+            Bitacora.objects.create(
+                codigo_usuario=u,
+                accion=f"Edición horario #{item.id} ({before.hora_ini}-{before.hora_fin} -> {item.hora_ini}-{item.hora_fin})",
+                fecha=timezone.now().date(),
+                hora=timezone.now().time(),
+                ip=self._get_client_ip(self.request),
+            )
+        except Usuario.DoesNotExist:
+            pass
+
+    def _get_client_ip(self, request):
+        xf = request.META.get("HTTP_X_FORWARDED_FOR")
+        return xf.split(",")[0] if xf else request.META.get("REMOTE_ADDR")
+
+class ReservaViewSet(viewsets.ModelViewSet):
+    queryset = Reserva.objects.all().order_by("id")
     serializer_class = ReservaSerializer
-    filterset_fields = ['codigousuario', 'idareac', 'fecha', 'estado']
-    search_fields = ['estado']
-    ordering_fields = ['id', 'fecha']
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ["codigousuario", "idareac", "fecha", "estado"]
+    search_fields = ["estado"]
+    ordering_fields = ["id", "fecha", "horaini", "horafin"]
 
+    # ---------- Helpers ----------
+    def _user_catalog(self, request) -> Usuario:
+        return Usuario.objects.get(correo=request.user.email)
 
+    def _has_active_tenancy(self, usuario: Usuario) -> bool:
+        today = timezone.localdate()
+        return Pertenece.objects.filter(
+            codigo_usuario=usuario,
+            fecha_ini__lte=today
+        ).filter(
+            models.Q(fecha_fin__isnull=True) | models.Q(fecha_fin__gte=today)
+        ).exists()
+
+    def _area_is_active(self, area: AreasComunes) -> bool:
+        return (area.estado or "").strip().lower() == "activo"
+
+    @staticmethod
+    def _overlaps(a_ini, a_fin, b_ini, b_fin) -> bool:
+        # [a_ini, a_fin) vs [b_ini, b_fin)
+        return a_ini < b_fin and a_fin > b_ini
+
+    @staticmethod
+    def _parse_date_ymd(s: str):
+        return datetime.strptime(s, "%Y-%m-%d").date()
+
+    # ---------- Disponibilidad (con "libres") ----------
+    @action(detail=False, methods=["get"], url_path="disponibilidad", permission_classes=[IsAuthenticated])
+    def disponibilidad(self, request):
+        """
+        GET /api/reservas/disponibilidad/?idareac=1&fecha=YYYY-MM-DD
+        Devuelve: horarios configurados, reservas ocupadas y franjas libres calculadas.
+        """
+        idareac = request.query_params.get("idareac")
+        fecha_str = request.query_params.get("fecha")
+        if not idareac or not fecha_str:
+            return Response({"detail": "idareac y fecha son requeridos."}, status=400)
+        try:
+            id_area = int(idareac)
+            fecha = self._parse_date_ymd(fecha_str)
+        except Exception:
+            return Response({"detail": "Parámetros inválidos. Formato fecha: YYYY-MM-DD."}, status=400)
+
+        try:
+            area = AreasComunes.objects.get(pk=id_area)
+        except AreasComunes.DoesNotExist:
+            return Response({"detail": "Área no encontrada."}, status=404)
+
+        horarios = Horarios.objects.filter(id_area_c=area).order_by("hora_ini")
+        horarios_ser = HorariosSerializer(horarios, many=True).data
+
+        ocupadas = list(
+            Reserva.objects.filter(idareac=area, fecha=fecha)
+            .exclude(estado__iexact="cancelada")
+            .values("id", "horaini", "horafin", "estado")
+        )
+
+        def restar_francas(base: list[tuple], taken: list[tuple]) -> list[tuple]:
+            libres = []
+            for b_ini, b_fin in base:
+                segmentos = [(b_ini, b_fin)]
+                for t_ini, t_fin in taken:
+                    nuevos = []
+                    for s_ini, s_fin in segmentos:
+                        if not (s_ini < t_fin and s_fin > t_ini):
+                            nuevos.append((s_ini, s_fin))
+                            continue
+                        if t_ini > s_ini:
+                            nuevos.append((s_ini, min(t_ini, s_fin)))
+                        if t_fin < s_fin:
+                            nuevos.append((max(t_fin, s_ini), s_fin))
+                    segmentos = [(a, b) for (a, b) in nuevos if a < b]
+                libres.extend(segmentos)
+            libres.sort(key=lambda x: x[0])
+            return libres
+
+        base = [(h.hora_ini, h.hora_fin) for h in horarios]
+        taken = [(r["horaini"], r["horafin"]) for r in ocupadas]
+        libres = restar_francas(base, taken)
+        libres_ser = [{"hora_ini": li, "hora_fin": lf} for (li, lf) in libres]
+
+        return Response({
+            "area": {"id": area.id, "descripcion": area.descripcion, "estado": area.estado},
+            "fecha": fecha_str,
+            "horarios": horarios_ser,
+            "ocupadas": ocupadas,
+            "libres": libres_ser,
+        }, status=200)
+
+    # ---------- Crear (confirmar reserva) ----------
+    def create(self, request, *args, **kwargs):
+        payload = ReservaCreateSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        data = payload.validated_data
+
+        try:
+            usuario = self._user_catalog(request)
+        except Usuario.DoesNotExist:
+            return Response({"detail": "Usuario no registrado en catálogo."}, status=400)
+
+        if not self._has_active_tenancy(usuario):
+            return Response({"detail": "No tienes una unidad habitacional activa vinculada."}, status=403)
+
+        try:
+            area = AreasComunes.objects.get(pk=data["idareac"])
+        except AreasComunes.DoesNotExist:
+            return Response({"detail": "Área no encontrada."}, status=404)
+
+        if not self._area_is_active(area):
+            return Response({"detail": "Área no disponible (inactiva/mantenimiento)."}, status=400)
+
+        if data["fecha"] < timezone.localdate():
+            return Response({"detail": "La fecha debe ser hoy o futura."}, status=400)
+
+        franjas = Horarios.objects.filter(id_area_c=area)
+        if not franjas.exists():
+            return Response({"detail": "El área no tiene horarios configurados."}, status=400)
+
+        if not any(h.hora_ini <= data["hora_ini"] and data["hora_fin"] <= h.hora_fin for h in franjas):
+            return Response({"detail": "El rango solicitado no cae dentro de los horarios del área."}, status=400)
+
+        conflictos = Reserva.objects.filter(
+            idareac=area, fecha=data["fecha"]
+        ).exclude(estado__iexact="cancelada")
+
+        for r in conflictos:
+            if self._overlaps(data["hora_ini"], data["hora_fin"], r.horaini, r.horafin):
+                return Response({"detail": "Horario no disponible (solapa con otra reserva)."}, status=409)
+
+        with transaction.atomic():
+            res = Reserva.objects.create(
+                codigousuario=usuario,
+                idareac=area,
+                fecha=data["fecha"],
+                horaini=data["hora_ini"],
+                horafin=data["hora_fin"],
+                estado="confirmada",
+            )
+            try:
+                Bitacora.objects.create(
+                    codigo_usuario=usuario,
+                    accion=f"Reserva confirmada área #{area.id} {area.descripcion} {data['fecha']} {data['hora_ini']}-{data['hora_fin']}",
+                    fecha=timezone.now().date(),
+                    hora=timezone.now().time(),
+                    ip=request.META.get("HTTP_X_FORWARDED_FOR", "").split(",")[0] or request.META.get("REMOTE_ADDR"),
+                )
+            except Exception:
+                pass
+
+        return Response(ReservaSerializer(res).data, status=201)
+
+    # ---------- PATCH /reservas/<id>/ (parcial) ----------
+    def partial_update(self, request, *args, **kwargs):
+        """
+        Permite actualizar parcial: fecha, hora_ini, hora_fin.
+        Repite validaciones básicas y de solape.
+        """
+        try:
+            usuario = self._user_catalog(request)
+        except Usuario.DoesNotExist:
+            return Response({"detail": "Usuario no registrado en catálogo."}, status=400)
+
+        try:
+            res = Reserva.objects.select_related("idareac", "codigousuario").get(pk=kwargs["pk"])
+        except Reserva.DoesNotExist:
+            return Response({"detail": "Reserva no encontrada."}, status=404)
+
+        if res.codigousuario != usuario and not request.user.is_staff:
+            return Response({"detail": "No puedes editar esta reserva."}, status=403)
+
+        # Validar payload parcial
+        payload = ReservaReprogramarSerializer(data=request.data, partial=True)
+        payload.is_valid(raise_exception=True)
+        data = payload.validated_data
+
+        # Determinar valores finales propuestos (lo que ya tiene + lo que viene)
+        nueva_fecha = data.get("fecha", res.fecha)
+        nueva_hini  = data.get("hora_ini", res.horaini)
+        nueva_hfin  = data.get("hora_fin", res.horafin)
+
+        # Reglas
+        if nueva_fecha < timezone.localdate():
+            return Response({"detail": "La fecha debe ser hoy o futura."}, status=400)
+
+        area = res.idareac
+        if not self._area_is_active(area):
+            return Response({"detail": "Área no disponible (inactiva/mantenimiento)."}, status=400)
+
+        franjas = Horarios.objects.filter(id_area_c=area)
+        if not franjas.exists():
+            return Response({"detail": "El área no tiene horarios configurados."}, status=400)
+
+        if not any(h.hora_ini <= nueva_hini and nueva_hfin <= h.hora_fin for h in franjas):
+            return Response({"detail": "El rango solicitado no cae dentro de los horarios del área."}, status=400)
+
+        # Solapes (excluyéndose a sí misma)
+        conflictos = Reserva.objects.filter(
+            idareac=area, fecha=nueva_fecha
+        ).exclude(estado__iexact="cancelada").exclude(pk=res.pk)
+
+        for r in conflictos:
+            if self._overlaps(nueva_hini, nueva_hfin, r.horaini, r.horafin):
+                return Response({"detail": "Horario no disponible (solapa con otra reserva)."}, status=409)
+
+        # Guardar cambios reales solo de los campos enviados
+        campos = []
+        if "fecha" in data:
+            res.fecha = nueva_fecha
+            campos.append("fecha")
+        if "hora_ini" in data:
+            res.horaini = nueva_hini
+            campos.append("horaini")
+        if "hora_fin" in data:
+            res.horafin = nueva_hfin
+            campos.append("horafin")
+
+        if campos:
+            res.estado = "confirmada"
+            campos.append("estado")
+            res.save(update_fields=campos)
+
+            try:
+                Bitacora.objects.create(
+                    codigo_usuario=usuario,
+                    accion=f"Edición (PATCH) reserva #{res.id} -> {res.fecha} {res.horaini}-{res.horafin}",
+                    fecha=timezone.now().date(),
+                    hora=timezone.now().time(),
+                    ip=request.META.get("HTTP_X_FORWARDED_FOR", "").split(",")[0] or request.META.get("REMOTE_ADDR"),
+                )
+            except Exception:
+                pass
+
+        return Response(ReservaSerializer(res).data, status=200)
+
+    # ---------- Mis reservas ----------
+    @action(detail=False, methods=["get"], url_path="mias", permission_classes=[IsAuthenticated])
+    def mias(self, request):
+        try:
+            usuario = self._user_catalog(request)
+        except Usuario.DoesNotExist:
+            return Response({"detail": "Usuario no registrado en catálogo."}, status=400)
+
+        qs = self.filter_queryset(
+            self.get_queryset().filter(codigousuario=usuario).order_by("-fecha", "-horaini")
+        )
+        page = self.paginate_queryset(qs)
+        if page is not None:
+            return self.get_paginated_response(ReservaSerializer(page, many=True).data)
+        return Response(ReservaSerializer(qs, many=True).data, status=200)
+
+    # ---------- Cancelar ----------
+    @action(detail=True, methods=["post"], url_path="cancelar", permission_classes=[IsAuthenticated])
+    def cancelar(self, request, pk=None):
+        try:
+            usuario = self._user_catalog(request)
+        except Usuario.DoesNotExist:
+            return Response({"detail": "Usuario no registrado en catálogo."}, status=400)
+
+        try:
+            res = Reserva.objects.get(pk=pk)
+        except Reserva.DoesNotExist:
+            return Response({"detail": "Reserva no encontrada."}, status=404)
+
+        if res.codigousuario != usuario and not request.user.is_staff:
+            return Response({"detail": "No puedes cancelar esta reserva."}, status=403)
+
+        if (res.estado or "").lower() == "cancelada":
+            return Response({"detail": "La reserva ya está cancelada."}, status=400)
+
+        # (opcional) validar payload si mandas motivo
+        _ = ReservaCancelarSerializer(data=request.data)
+        _.is_valid(raise_exception=False)
+
+        res.estado = "cancelada"
+        res.save(update_fields=["estado"])
+
+        try:
+            Bitacora.objects.create(
+                codigo_usuario=usuario,
+                accion=f"Cancelación de reserva #{res.id}",
+                fecha=timezone.now().date(),
+                hora=timezone.now().time(),
+                ip=request.META.get("HTTP_X_FORWARDED_FOR", "").split(",")[0] or request.META.get("REMOTE_ADDR"),
+            )
+        except Exception:
+            pass
+
+        return Response({"detail": "Reserva cancelada."}, status=200)
+
+    # ---------- Reprogramar (POST /reservas/<id>/reprogramar/) ----------
+    @action(detail=True, methods=["post"], url_path="reprogramar", permission_classes=[IsAuthenticated])
+    def reprogramar(self, request, pk=None):
+        payload = ReservaReprogramarSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        data = payload.validated_data
+
+        try:
+            usuario = self._user_catalog(request)
+        except Usuario.DoesNotExist:
+            return Response({"detail": "Usuario no registrado en catálogo."}, status=400)
+
+        try:
+            res = Reserva.objects.select_related("idareac").get(pk=pk)
+        except Reserva.DoesNotExist:
+            return Response({"detail": "Reserva no encontrada."}, status=404)
+
+        if res.codigousuario != usuario and not request.user.is_staff:
+            return Response({"detail": "No puedes reprogramar esta reserva."}, status=403)
+
+        area = res.idareac
+        if not self._area_is_active(area):
+            return Response({"detail": "Área no disponible (inactiva/mantenimiento)."}, status=400)
+
+        if data["fecha"] < timezone.localdate():
+            return Response({"detail": "La fecha debe ser hoy o futura."}, status=400)
+
+        franjas = Horarios.objects.filter(id_area_c=area)
+        if not franjas.exists():
+            return Response({"detail": "El área no tiene horarios configurados."}, status=400)
+
+        if not any(h.hora_ini <= data["hora_ini"] and data["hora_fin"] <= h.hora_fin for h in franjas):
+            return Response({"detail": "El rango solicitado no cae dentro de los horarios del área."}, status=400)
+
+        conflictos = Reserva.objects.filter(
+            idareac=area, fecha=data["fecha"]
+        ).exclude(estado__iexact="cancelada").exclude(pk=res.pk)
+
+        for r in conflictos:
+            if self._overlaps(data["hora_ini"], data["hora_fin"], r.horaini, r.horafin):
+                return Response({"detail": "Horario no disponible (solapa con otra reserva)."}, status=409)
+
+        res.horaini = data["hora_ini"]
+        res.horafin = data["hora_fin"]
+        res.fecha = data["fecha"]
+        res.estado = "confirmada"
+        res.save(update_fields=["horaini", "horafin", "fecha", "estado"])
+
+        try:
+            Bitacora.objects.create(
+                codigo_usuario=usuario,
+                accion=f"Reprogramación de reserva #{res.id} -> {data['fecha']} {data['hora_ini']}-{data['hora_fin']}",
+                fecha=timezone.now().date(),
+                hora=timezone.now().time(),
+                ip=request.META.get("HTTP_X_FORWARDED_FOR", "").split(",")[0] or request.META.get("REMOTE_ADDR"),
+            )
+        except Exception:
+            pass
+
+        return Response(ReservaSerializer(res).data, status=200)
 class AsignacionViewSet(BaseModelViewSet):
     queryset = Asignacion.objects.all().order_by('id')
     serializer_class = AsignacionSerializer
