@@ -35,7 +35,7 @@ if DEBUG:
     SESSION_COOKIE_SECURE = False
     CSRF_COOKIE_SECURE = False
 else:
-    # Producción: configurado específicamente para Vercel
+    # Producción: configurado específicamente para Vercel con configuración robusta
     CORS_ALLOW_ALL_ORIGINS = False
     CORS_ALLOWED_ORIGINS = [
         "https://si-2-test1-app.vercel.app",
@@ -66,6 +66,8 @@ else:
         'PUT',
     ]
     CORS_PREFLIGHT_MAX_AGE = 86400  # 24 horas
+    CORS_EXPOSE_HEADERS = ['Content-Type', 'Authorization']
+    CORS_REPLACE_HTTPS_REFERER = True
     ALLOWED_HOSTS = ["127.0.0.1", "localhost", "si2-test1-appbackend.onrender.com"]
     SESSION_COOKIE_SAMESITE = os.getenv("SESSION_COOKIE_SAMESITE", "None")
     CSRF_COOKIE_SAMESITE = os.getenv("CSRF_COOKIE_SAMESITE", "None")
@@ -128,6 +130,7 @@ MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "corsheaders.middleware.CorsMiddleware",
+    "api.cors_error_middleware.CORSErrorMiddleware",  # Middleware para CORS en errores
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
