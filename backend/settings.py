@@ -35,15 +35,15 @@ if DEBUG:
     SESSION_COOKIE_SECURE = False
     CSRF_COOKIE_SECURE = False
 else:
-    # Producción: más estricto pero funcional
-    CORS_ALLOW_ALL_ORIGINS = os.getenv("CORS_ALLOW_ALL_ORIGINS", "False").lower() == "true"
-    CORS_ALLOWED_ORIGINS = _csv_env(
-        "CORS_ALLOWED_ORIGINS",
-        ["https://si-2-test1-app.vercel.app"]
-    )
+    # Producción: configurado específicamente para Vercel
+    CORS_ALLOW_ALL_ORIGINS = False
+    CORS_ALLOWED_ORIGINS = [
+        "https://si-2-test1-app.vercel.app",
+        "https://si-2-test1-app.vercel.app/",
+        "http://localhost:5173",  # Para desarrollo local
+        "http://localhost:3000",  # Para desarrollo local alternativo
+    ]
     CORS_ALLOW_CREDENTIALS = True
-    # Agregar configuraciones CORS adicionales para manejar errores
-    CORS_ALLOW_ALL_ORIGINS = False  # Temporal para debug
     CORS_ALLOW_HEADERS = [
         'accept',
         'accept-encoding',
@@ -54,6 +54,8 @@ else:
         'user-agent',
         'x-csrftoken',
         'x-requested-with',
+        'x-forwarded-for',
+        'x-forwarded-proto',
     ]
     CORS_ALLOW_METHODS = [
         'DELETE',
@@ -63,7 +65,8 @@ else:
         'POST',
         'PUT',
     ]
-    ALLOWED_HOSTS = _csv_env("ALLOWED_HOSTS", ["127.0.0.1", "localhost", "si2-test1-appbackend.onrender.com"])
+    CORS_PREFLIGHT_MAX_AGE = 86400  # 24 horas
+    ALLOWED_HOSTS = ["127.0.0.1", "localhost", "si2-test1-appbackend.onrender.com"]
     SESSION_COOKIE_SAMESITE = os.getenv("SESSION_COOKIE_SAMESITE", "None")
     CSRF_COOKIE_SAMESITE = os.getenv("CSRF_COOKIE_SAMESITE", "None")
     SESSION_COOKIE_SECURE = True
@@ -90,6 +93,8 @@ CSRF_TRUSTED_ORIGINS = _csv_env(
         "http://localhost:5173",
         "http://127.0.0.1:3000",
         "http://localhost:3000",
+        "https://si-2-test1-app.vercel.app",  # Tu frontend en Vercel
+        "https://si2-test1-appbackend.onrender.com",  # Tu backend en Render
     ]
 )
 
