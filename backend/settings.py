@@ -14,16 +14,49 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
 # ------------------------------------
+# Helpers para listas desde .env
+# ------------------------------------
+def _csv_env(name: str, default: list[str] | None = None) -> list[str]:
+    """
+    Lee una lista separada por comas del .env, limpia espacios
+    y elimina el slash final en orígenes tipo https://dominio.com/
+    """
+    raw = os.getenv(name, "")
+    vals = [x.strip() for x in raw.split(",") if x.strip()]
+    # quitar "/" final en orígenes
+    vals = [v[:-1] if v.endswith("/") else v for v in vals]
+    return vals if vals else (default or [])
+
+def _hosts_env(name: str, default: list[str] | None = None) -> list[str]:
+    """
+    Lee hosts desde .env y elimina esquema/puerto si alguien los puso por error.
+    ALLOWED_HOSTS solo admite hostnames o IPs.
+    """
+    vals = _csv_env(name, default)
+    cleaned: list[str] = []
+    for v in vals:
+        if v.startswith("http://"):
+            v = v[len("http://"):]
+        elif v.startswith("https://"):
+            v = v[len("https://"):]
+        # cortar cualquier path sobrante
+        v = v.split("/")[0]
+        # quitar puerto si lo incluyeron (e.g., ejemplo.com:8000)
+        v = v.split(":")[0]
+        if v:
+            cleaned.append(v)
+    return cleaned
+
+# ------------------------------------
 # Seguridad / Debug
 # ------------------------------------
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-only-not-secret")
 DEBUG = os.getenv("DEBUG", "False").lower() == "true"
 
-def _csv_env(name: str, default: list[str]) -> list[str]:
-    raw = os.getenv(name, "")
-    if not raw:
-        return default
-    return [x.strip() for x in raw.split(",") if x.strip()]
+# Estas se ajustan debajo según DEBUG
+ALLOWED_HOSTS: list[str] = []
+CORS_ALLOWED_ORIGINS: list[str] = []
+CSRF_TRUSTED_ORIGINS: list[str] = []
 
 if DEBUG:
     # Desarrollo: abierto y cómodo
@@ -34,41 +67,47 @@ if DEBUG:
     CSRF_COOKIE_SAMESITE = "Lax"
     SESSION_COOKIE_SECURE = False
     CSRF_COOKIE_SECURE = False
+    # En dev, defaults razonables
+    CSRF_TRUSTED_ORIGINS = _csv_env(
+        "CSRF_TRUSTED_ORIGINS",
+        [
+            "http://127.0.0.1:8000",
+            "http://localhost:8000",
+            "http://127.0.0.1:5173",
+            "http://localhost:5173",
+            "http://127.0.0.1:3000",
+            "http://localhost:3000",
+        ],
+    )
 else:
-    # Producción: configurado específicamente para Vercel con configuración robusta
+    # Producción: cerrado y controlado por .env
     CORS_ALLOW_ALL_ORIGINS = False
-    CORS_ALLOWED_ORIGINS = [
-        "https://si-2-test1-app.vercel.app",
-        "https://si-2-test1-app.vercel.app/",
-        "http://localhost:5173",  # Para desarrollo local
-        "http://localhost:3000",  # Para desarrollo local alternativo
-    ]
     CORS_ALLOW_CREDENTIALS = True
+
+    # Lee listas desde .env (sin slashes finales)
+    ALLOWED_HOSTS = _hosts_env("ALLOWED_HOSTS", [])
+    CORS_ALLOWED_ORIGINS = _csv_env("CORS_ALLOWED_ORIGINS", [])
+    CSRF_TRUSTED_ORIGINS = _csv_env("CSRF_TRUSTED_ORIGINS", [])
+
+    # Encabezados/métodos permitidos (estables)
     CORS_ALLOW_HEADERS = [
-        'accept',
-        'accept-encoding',
-        'authorization',
-        'content-type',
-        'dnt',
-        'origin',
-        'user-agent',
-        'x-csrftoken',
-        'x-requested-with',
-        'x-forwarded-for',
-        'x-forwarded-proto',
+        "accept",
+        "accept-encoding",
+        "authorization",
+        "content-type",
+        "dnt",
+        "origin",
+        "user-agent",
+        "x-csrftoken",
+        "x-requested-with",
+        "x-forwarded-for",
+        "x-forwarded-proto",
     ]
-    CORS_ALLOW_METHODS = [
-        'DELETE',
-        'GET',
-        'OPTIONS',
-        'PATCH',
-        'POST',
-        'PUT',
-    ]
+    CORS_ALLOW_METHODS = ["DELETE", "GET", "OPTIONS", "PATCH", "POST", "PUT"]
     CORS_PREFLIGHT_MAX_AGE = 86400  # 24 horas
-    CORS_EXPOSE_HEADERS = ['Content-Type', 'Authorization']
-    CORS_REPLACE_HTTPS_REFERER = True
-    ALLOWED_HOSTS = ["127.0.0.1", "localhost", "si2-test1-appbackend.onrender.com"]
+    CORS_EXPOSE_HEADERS = ["Content-Type", "Authorization"]
+
+    # Cookies/seguridad
     SESSION_COOKIE_SAMESITE = os.getenv("SESSION_COOKIE_SAMESITE", "None")
     CSRF_COOKIE_SAMESITE = os.getenv("CSRF_COOKIE_SAMESITE", "None")
     SESSION_COOKIE_SECURE = True
@@ -86,23 +125,23 @@ else:
     SECURE_BROWSER_XSS_FILTER = os.getenv("SECURE_BROWSER_XSS_FILTER", "True").lower() == "true"
     X_FRAME_OPTIONS = os.getenv("X_FRAME_OPTIONS", "DENY")
 
-CSRF_TRUSTED_ORIGINS = _csv_env(
-    "CSRF_TRUSTED_ORIGINS",
-    [
-        "http://127.0.0.1:8000",
-        "http://localhost:8000",
-        "http://127.0.0.1:5173",
-        "http://localhost:5173",
-        "http://127.0.0.1:3000",
-        "http://localhost:3000",
-        "https://si-2-test1-app.vercel.app",  # Tu frontend en Vercel
-        "https://si2-test1-appbackend.onrender.com",  # Tu backend en Render
-    ]
-)
+# Orígenes CSRF por defecto (si no vinieron del bloque anterior)
+if not CSRF_TRUSTED_ORIGINS:
+    CSRF_TRUSTED_ORIGINS = _csv_env(
+        "CSRF_TRUSTED_ORIGINS",
+        [
+            "http://127.0.0.1:8000",
+            "http://localhost:8000",
+            "http://127.0.0.1:5173",
+            "http://localhost:5173",
+            "http://127.0.0.1:3000",
+            "http://localhost:3000",
+        ],
+    )
 
 CSRF_COOKIE_NAME = "csrftoken"
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
-SECURE_HSTS_SECONDS = 0 if DEBUG else 60 * 60 * 24 * 30  # 30 días
+# No volver a reasignar HSTS aquí para no pisar lo leído por env
 SECURE_SSL_REDIRECT = not DEBUG
 
 # ------------------------------------
@@ -170,15 +209,14 @@ DATABASES = {
 # Configuraciones adicionales después
 _db_url = os.getenv("DATABASE_URL", "")
 if ":6543/" in _db_url:
+    # pgbouncer en Supabase (transaction pooling)
     DATABASES["default"]["CONN_MAX_AGE"] = 0
 else:
     DATABASES["default"]["CONN_MAX_AGE"] = 600
 
 # SSL para Supabase
 if "supabase" in _db_url:
-    DATABASES["default"]["OPTIONS"] = {
-        "sslmode": "require"
-    }
+    DATABASES["default"]["OPTIONS"] = {"sslmode": "require"}
 
 # ------------------------------------
 # Password validators
@@ -222,9 +260,7 @@ REST_FRAMEWORK = {
         "django_filters.rest_framework.DjangoFilterBackend",
         "rest_framework.filters.SearchFilter",
         "rest_framework.filters.OrderingFilter",
-
     ],
-
 }
 
 # ------------------------------------
@@ -274,15 +310,15 @@ SUPABASE_STORAGE_URL = f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_STORA
 # Configuración de IA
 # ------------------------------------
 AI_IMAGE_SETTINGS = {
-    'MAX_SIZE': (1920, 1080),
-    'THUMBNAIL_SIZE': (800, 600),
-    'JPEG_QUALITY': int(os.getenv("AI_JPEG_QUALITY", "85")),
-    'MAX_FILE_SIZE_MB': 5,
-    'FACE_TOLERANCE': float(os.getenv("AI_FACE_TOLERANCE", "0.6")),
-    'PLATE_CONFIDENCE_THRESHOLD': float(os.getenv("AI_PLATE_CONFIDENCE_THRESHOLD", "0.5")),
+    "MAX_SIZE": (1920, 1080),
+    "THUMBNAIL_SIZE": (800, 600),
+    "JPEG_QUALITY": int(os.getenv("AI_JPEG_QUALITY", "85")),
+    "MAX_FILE_SIZE_MB": 5,
+    "FACE_TOLERANCE": float(os.getenv("AI_FACE_TOLERANCE", "0.6")),
+    "PLATE_CONFIDENCE_THRESHOLD": float(os.getenv("AI_PLATE_CONFIDENCE_THRESHOLD", "0.5")),
 }
 
 # ------------------------------------
 # Configuración del microservicio de IA
 # ------------------------------------
-AI_MICROSERVICE_URL = os.getenv('AI_MICROSERVICE_URL', 'http://localhost:8001')
+AI_MICROSERVICE_URL = os.getenv("AI_MICROSERVICE_URL", "http://localhost:8001")
