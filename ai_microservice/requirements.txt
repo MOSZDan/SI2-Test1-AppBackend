@@ -6,4 +6,4 @@ pillow
 easyocr
 pydantic
 opencv-python
-
+python-multipart
