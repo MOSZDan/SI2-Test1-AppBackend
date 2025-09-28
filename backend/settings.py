@@ -130,7 +130,7 @@ TEMPLATES = [
 WSGI_APPLICATION = "backend.wsgi.application"
 
 # ------------------------------------
-# DATABASES - Usando el enfoque de tu compañero
+# DATABASES - Configuración simple para Transaction Pooler
 # ------------------------------------
 DATABASES = {
     "default": dj_database_url.config(
@@ -141,11 +141,11 @@ DATABASES = {
 # Configuraciones adicionales después
 _db_url = os.getenv("DATABASE_URL", "")
 if ":6543/" in _db_url:
-    # Session pooler (puerto 5432) - conexiones de duración media
-    DATABASES["default"]["CONN_MAX_AGE"] = 300
-elif ":5432/" in _db_url:
     # Transaction pooler (puerto 6543) - sin conexiones persistentes
     DATABASES["default"]["CONN_MAX_AGE"] = 0
+elif ":5432/" in _db_url:
+    # Session pooler (puerto 5432) - conexiones de duración media
+    DATABASES["default"]["CONN_MAX_AGE"] = 300
 else:
     # Conexión directa - conexiones persistentes
     DATABASES["default"]["CONN_MAX_AGE"] = 600
@@ -153,7 +153,8 @@ else:
 # SSL para Supabase
 if "supabase" in _db_url:
     DATABASES["default"]["OPTIONS"] = {
-        "sslmode": "require"
+        "sslmode": "require",
+        "connect_timeout": 15,  # Más tiempo para conectar
     }
 
 # ------------------------------------
