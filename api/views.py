@@ -1146,16 +1146,16 @@ class LoginView(APIView):
 
         # 5) Armar payload con datos del usuario (y rol)
         rol_obj = None
-        if u.idrol:  # CORREGIDO: usar u.idrol en lugar de u.idrol_id
+        if u.idrol_id:
             try:
-                r = u.idrol  # Usar la relación directa
+                r = Rol.objects.get(pk=u.idrol_id)
                 rol_obj = {
                     "id": r.id,
                     "descripcion": r.descripcion,
                     "tipo": r.tipo,
                     "estado": r.estado,
                 }
-            except Exception:
+            except Rol.DoesNotExist:
                 pass
 
         return Response({
@@ -1168,7 +1168,7 @@ class LoginView(APIView):
                 "sexo": u.sexo,
                 "telefono": u.telefono,
                 "estado": u.estado,
-                "idrol": u.idrol.id if u.idrol else None,  # CORREGIDO
+                "idrol": u.idrol_id,
                 "rol": rol_obj,
             }
         }, status=status.HTTP_200_OK)
@@ -1918,4 +1918,3 @@ class ComprobantePDFView(APIView):
         _bitacora(request, f"Descarga comprobante #{factura.id}")
 
         return FileResponse(buff, as_attachment=True, filename=f"comprobante_{factura.id}.pdf")
-
