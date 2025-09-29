@@ -1,6 +1,7 @@
 """
 Django settings for backend project.
 """
+
 from pathlib import Path
 import os
 from dotenv import load_dotenv
@@ -72,7 +73,14 @@ CORS_ALLOW_HEADERS = [
     'x-requested-with',
 ]
 
-CORS_ALLOW_METHODS = ['DELETE', 'GET', 'OPTIONS', 'PATCH', 'POST', 'PUT']
+CORS_ALLOW_METHODS = [
+    'DELETE',
+    'GET',
+    'OPTIONS',
+    'PATCH',
+    'POST',
+    'PUT',
+]
 
 CSRF_TRUSTED_ORIGINS = _csv_env(
     "CSRF_TRUSTED_ORIGINS",
@@ -107,8 +115,9 @@ INSTALLED_APPS = [
     "rest_framework",
     "rest_framework.authtoken",
     "django_filters",
-    "django_extensions",
-    "api",
+    'django_extensions',
+
+    "api",  # tu app
 ]
 
 # ------------------------------------
@@ -146,49 +155,24 @@ TEMPLATES = [
 WSGI_APPLICATION = "backend.wsgi.application"
 
 # ------------------------------------
-# Base de datos (Supabase/Postgres) con timeouts seguros
-# ------------------------------------
 DATABASES = {
     "default": dj_database_url.config(
         env="DATABASE_URL",
-        # Nota: dejamos conn_max_age controlado abajo para soportar pooler 6543
     )
 }
 
+# Configuraciones adicionales después
 _db_url = os.getenv("DATABASE_URL", "")
-
-# Si usas el pooler de Supabase (puerto 6543), no mantengas conexiones persistentes
 if ":6543/" in _db_url:
     DATABASES["default"]["CONN_MAX_AGE"] = 0
 else:
-    DATABASES["default"]["CONN_MAX_AGE"] = 600  # 10 minutos
+    DATABASES["default"]["CONN_MAX_AGE"] = 600
 
-# SSL y timeouts de conexión/bloqueo (NO statement_timeout global)
-db_opts = DATABASES["default"].setdefault("OPTIONS", {})
-
-# SSL para Supabase u otros managed
+# SSL para Supabase
 if "supabase" in _db_url:
-    db_opts["sslmode"] = "require"
-
-# Tiempo máximo para establecer conexión (segundos)
-# Evita que el worker quede colgado intentando conectar cuando el pooler cae
-db_opts["connect_timeout"] = 10
-
-# Evita colgarse esperando BLOQUEOS (locks) de otras transacciones
-# (5s). Esto NO afecta tokens salvo que realmente haya un lock sobre sus tablas.
-extra_options = []
-# OJO: Postgres interpreta enteros en milisegundos; '5000' = 5s
-extra_options.append("-c lock_timeout=5000")
-
-# Si NO quieres statement_timeout global, no lo agregues aquí.
-# Para vistas pesadas, usa SET LOCAL statement_timeout dentro de la vista.
-# extra_options.append("-c statement_timeout=10000")  # <-- NO usar globalmente
-
-# Concatena opciones previas si existieran
-if "options" in db_opts and db_opts["options"]:
-    extra_options.insert(0, db_opts["options"])
-db_opts["options"] = " ".join(extra_options).strip()
-
+    DATABASES["default"]["OPTIONS"] = {
+        "sslmode": "require"
+    }
 # ------------------------------------
 # Password validators
 # ------------------------------------
@@ -231,7 +215,9 @@ REST_FRAMEWORK = {
         "django_filters.rest_framework.DjangoFilterBackend",
         "rest_framework.filters.SearchFilter",
         "rest_framework.filters.OrderingFilter",
+
     ],
+
 }
 
 # ------------------------------------
@@ -272,16 +258,13 @@ LOGGING = {
     },
 }
 
-# ------------------------------------
-# Supabase (Storage / Service Key)
-# ------------------------------------
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 SUPABASE_STORAGE_BUCKET = os.getenv("SUPABASE_STORAGE_BUCKET", "ai-detection-images")
 SUPABASE_STORAGE_URL = f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_STORAGE_BUCKET}"
 
 # ------------------------------------
-# Configuración de IA (si aplica)
+# Configuración de IA
 # ------------------------------------
 AI_IMAGE_SETTINGS = {
     'MAX_SIZE': (1920, 1080),
@@ -293,6 +276,6 @@ AI_IMAGE_SETTINGS = {
 }
 
 # ------------------------------------
-# Microservicio IA
+# Configuración del microservicio de IA
 # ------------------------------------
 AI_MICROSERVICE_URL = os.getenv('AI_MICROSERVICE_URL', 'http://localhost:8001')
