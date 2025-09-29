@@ -8,7 +8,7 @@ from .views import (
     FinanzasViewSet, ComunicadosViewSet, HorariosViewSet, ReservaViewSet,
     AsignacionViewSet, EnvioViewSet, RegistroViewSet, BitacoraViewSet,
     LoginView, RegisterView, LogoutView, AIDetectionViewSet, ReconocimientoFacialViewSet, DeteccionPlacaViewSet,
-    PerfilFacialViewSet, ReporteSeguridadViewSet, EstadoCuentaView, ComprobantePDFView
+    PerfilFacialViewSet, ReporteSeguridadViewSet, EstadoCuentaView, ComprobantePDFView, HealthView
 )
 
 router = DefaultRouter()
@@ -42,6 +42,9 @@ router.register(r'reportes-seguridad', ReporteSeguridadViewSet)
 urlpatterns = [
     # Todas las rutas de los viewsets
     path('', include(router.urls)),
+
+    # Health
+    path('health/', HealthView.as_view(), name='api-health'),
 
     # Auth
     path('auth/login/',    LoginView.as_view(),    name='auth-login'),

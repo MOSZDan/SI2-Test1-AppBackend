@@ -1136,13 +1136,24 @@ class LoginView(APIView):
             return Response({"detail": "Credenciales inválidas."}, status=status.HTTP_401_UNAUTHORIZED)
 
         # 3) Sincronizar/crear auth.User para usar TokenAuth
-        dj_user, _ = User.objects.get_or_create(username=email, defaults={"email": email})
-        if not dj_user.has_usable_password() or not dj_user.check_password(password):
-            dj_user.set_password(password)
-            dj_user.save()
+        try:
+            dj_user, _ = User.objects.get_or_create(username=email, defaults={"email": email})
+            if not dj_user.has_usable_password() or not dj_user.check_password(password):
+                dj_user.set_password(password)
+                dj_user.save()
 
-        # 4) Crear/obtener token
-        token, _ = Token.objects.get_or_create(user=dj_user)
+            # 4) Crear/obtener token
+            token, _ = Token.objects.get_or_create(user=dj_user)
+        except Exception as e:
+            logging.getLogger("api.views").exception("Error creando usuario/token de auth para login")
+            return Response(
+                {
+                    "detail": "Error interno al preparar la autenticación.",
+                    "hint": "Asegúrate de haber corrido 'python manage.py migrate' para crear tablas auth y authtoken en la BD.",
+                    "error": str(e),
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
         # 5) Armar payload con datos del usuario (y rol)
         rol_obj = None
@@ -1280,6 +1291,34 @@ class LogoutView(APIView):
             detail = "Sesión cerrada."
 
         return Response({"detail": detail}, status=status.HTTP_200_OK)
+
+# HealthCheck sencillo (DB y tablas auth)
+class HealthView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        from django.db import connection
+        info = {"db": "ok", "auth_user": False, "authtoken_token": False}
+        try:
+            with connection.cursor() as cur:
+                cur.execute("SELECT 1")
+                cur.fetchone()
+        except Exception as e:
+            return Response({"db": "fail", "error": str(e)}, status=500)
+
+        try:
+            with connection.cursor() as cur:
+                cur.execute("SELECT to_regclass('public.auth_user') IS NOT NULL;")
+                info["auth_user"] = bool(cur.fetchone()[0])
+        except Exception:
+            info["auth_user"] = False
+        try:
+            with connection.cursor() as cur:
+                cur.execute("SELECT to_regclass('public.authtoken_token') IS NOT NULL;")
+                info["authtoken_token"] = bool(cur.fetchone()[0])
+        except Exception:
+            info["authtoken_token"] = False
+        return Response(info, status=200)
 
 # Agregar estos ViewSets al final de api/views.py, después de LogoutView y antes de AIDetectionViewSet:
 
