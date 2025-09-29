@@ -1,9 +1,0 @@
-fastapi
-uvicorn
-face_recognition
-numpy
-pillow
-easyocr
-pydantic
-opencv-python
-
