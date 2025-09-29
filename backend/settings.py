@@ -38,7 +38,7 @@ else:
     CORS_ALLOW_ALL_ORIGINS = os.getenv("CORS_ALLOW_ALL_ORIGINS", "False").lower() == "true"
     CORS_ALLOWED_ORIGINS = _csv_env(
         "CORS_ALLOWED_ORIGINS",
-        ["https://si-2-test1-app.vercel.app"]
+        ["https://si-2-test1-app.vercel.app", "https://si2-test1-app.onrender.com"]
     )
     CORS_ALLOW_CREDENTIALS = True
     ALLOWED_HOSTS = _csv_env("ALLOWED_HOSTS", ["127.0.0.1", "localhost", "si2-test1-appbackend.onrender.com"])
@@ -84,6 +84,7 @@ CSRF_TRUSTED_ORIGINS = _csv_env(
         "http://127.0.0.1:3000",
         "http://localhost:3000",
         "https://si-2-test1-app.vercel.app",
+        "https://si2-test1-app.onrender.com",
         "https://si2-test1-appbackend.onrender.com",
     ]
 )
