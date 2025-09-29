@@ -134,13 +134,15 @@ WSGI_APPLICATION = "backend.wsgi.application"
 # Base de datos (Supabase Postgres vía pooler, SSL)
 # ------------------------------------
 DATABASES = {
-    "default": dj_database_url.config(
-        env="DATABASE_URL",
-        conn_max_age=0,
-        ssl_require=True,
-    )
+    'default': {
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': os.environ.get('dbname'),
+        'USER': os.environ.get('user'),
+        'PASSWORD': os.environ.get('password'),
+        'HOST': os.environ.get('host'),
+        'PORT': os.environ.get('port'),
+    }
 }
-
 # ------------------------------------
 # Password validators
 # ------------------------------------
