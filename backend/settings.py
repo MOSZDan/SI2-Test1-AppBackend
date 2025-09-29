@@ -146,48 +146,22 @@ TEMPLATES = [
 WSGI_APPLICATION = "backend.wsgi.application"
 
 # ------------------------------------
-# Base de datos (Supabase/Postgres) con timeouts seguros
+# Base de datos (Supabase/Postgres) con variables individuales
 # ------------------------------------
 DATABASES = {
-    "default": dj_database_url.config(
-        env="DATABASE_URL",
-        # Nota: dejamos conn_max_age controlado abajo para soportar pooler 6543
-    )
+    'default': {
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': os.getenv('dbname', 'postgres'),
+        'USER': os.getenv('user', 'postgres'),
+        'PASSWORD': os.getenv('password', ''),
+        'HOST': os.getenv('host', 'localhost'),
+        'PORT': os.getenv('port', '5432'),
+        'OPTIONS': {
+            'sslmode': 'require',
+        },
+        'CONN_MAX_AGE': 0,  # No reutilizar conexiones para evitar timeouts
+    }
 }
-
-_db_url = os.getenv("DATABASE_URL", "")
-
-# Si usas el pooler de Supabase (puerto 6543), no mantengas conexiones persistentes
-if ":6543/" in _db_url:
-    DATABASES["default"]["CONN_MAX_AGE"] = 0
-else:
-    DATABASES["default"]["CONN_MAX_AGE"] = 600  # 10 minutos
-
-# SSL y timeouts de conexión/bloqueo (NO statement_timeout global)
-db_opts = DATABASES["default"].setdefault("OPTIONS", {})
-
-# SSL para Supabase u otros managed
-if "supabase" in _db_url:
-    db_opts["sslmode"] = "require"
-
-# Tiempo máximo para establecer conexión (segundos)
-# Evita que el worker quede colgado intentando conectar cuando el pooler cae
-db_opts["connect_timeout"] = 10
-
-# Evita colgarse esperando BLOQUEOS (locks) de otras transacciones
-# (5s). Esto NO afecta tokens salvo que realmente haya un lock sobre sus tablas.
-extra_options = []
-# OJO: Postgres interpreta enteros en milisegundos; '5000' = 5s
-extra_options.append("-c lock_timeout=5000")
-
-# Si NO quieres statement_timeout global, no lo agregues aquí.
-# Para vistas pesadas, usa SET LOCAL statement_timeout dentro de la vista.
-# extra_options.append("-c statement_timeout=10000")  # <-- NO usar globalmente
-
-# Concatena opciones previas si existieran
-if "options" in db_opts and db_opts["options"]:
-    extra_options.insert(0, db_opts["options"])
-db_opts["options"] = " ".join(extra_options).strip()
 
 # ------------------------------------
 # Password validators
