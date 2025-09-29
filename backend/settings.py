@@ -1,7 +1,6 @@
 """
 Django settings for backend project.
 """
-
 from pathlib import Path
 import os
 from dotenv import load_dotenv
@@ -19,17 +18,14 @@ load_dotenv(BASE_DIR / ".env")
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-only-not-secret")
 DEBUG = os.getenv("DEBUG", "False").lower() == "true"
 
-
 def _csv_env(name: str, default: list[str]) -> list[str]:
     raw = os.getenv(name, "")
     if not raw:
         return default
     return [x.strip() for x in raw.split(",") if x.strip()]
 
-
-# Configuración de CORS y hosts dependiendo del entorno
 if DEBUG:
-    # En desarrollo - permitir todos los orígenes
+    # Desarrollo: abierto y cómodo
     CORS_ALLOW_ALL_ORIGINS = True
     CORS_ALLOW_CREDENTIALS = True
     ALLOWED_HOSTS = ["*"]
@@ -38,21 +34,46 @@ if DEBUG:
     SESSION_COOKIE_SECURE = False
     CSRF_COOKIE_SECURE = False
 else:
-    # En producción - configuración estricta
-    CORS_ALLOW_ALL_ORIGINS = False
+    # Producción: más estricto
+    CORS_ALLOW_ALL_ORIGINS = os.getenv("CORS_ALLOW_ALL_ORIGINS", "False").lower() == "true"
     CORS_ALLOWED_ORIGINS = _csv_env(
         "CORS_ALLOWED_ORIGINS",
-        ["https://si-2-test1-app.vercel.app"]
+        ["https://si-2-test1-app.vercel.app", "https://si2-test1-app.onrender.com"]
     )
     CORS_ALLOW_CREDENTIALS = True
-    ALLOWED_HOSTS = _csv_env("ALLOWED_HOSTS",
-                             ["127.0.0.1", "localhost", "si2-test1-appbackend.onrender.com"])
+    ALLOWED_HOSTS = _csv_env("ALLOWED_HOSTS", ["127.0.0.1", "localhost", "si2-test1-appbackend.onrender.com"])
     SESSION_COOKIE_SAMESITE = os.getenv("SESSION_COOKIE_SAMESITE", "None")
     CSRF_COOKIE_SAMESITE = os.getenv("CSRF_COOKIE_SAMESITE", "None")
-    SESSION_COOKIE_SECURE = True
-    CSRF_COOKIE_SECURE = True
+    SESSION_COOKIE_SECURE = os.getenv("SESSION_COOKIE_SECURE", "True").lower() == "true"
+    CSRF_COOKIE_SECURE = os.getenv("CSRF_COOKIE_SECURE", "True").lower() == "true"
 
-# Orígenes confiables para CSRF
+    # Configuraciones adicionales de seguridad para producción
+    SESSION_COOKIE_HTTPONLY = os.getenv("SESSION_COOKIE_HTTPONLY", "True").lower() == "true"
+    CSRF_COOKIE_HTTPONLY = os.getenv("CSRF_COOKIE_HTTPONLY", "True").lower() == "true"
+
+    # Configuraciones SSL adicionales
+    SECURE_HSTS_SECONDS = int(os.getenv("SECURE_HSTS_SECONDS", "31536000"))
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = os.getenv("SECURE_HSTS_INCLUDE_SUBDOMAINS", "True").lower() == "true"
+    SECURE_HSTS_PRELOAD = os.getenv("SECURE_HSTS_PRELOAD", "True").lower() == "true"
+    SECURE_CONTENT_TYPE_NOSNIFF = os.getenv("SECURE_CONTENT_TYPE_NOSNIFF", "True").lower() == "true"
+    SECURE_BROWSER_XSS_FILTER = os.getenv("SECURE_BROWSER_XSS_FILTER", "True").lower() == "true"
+    X_FRAME_OPTIONS = os.getenv("X_FRAME_OPTIONS", "DENY")
+
+# Configuraciones adicionales de CORS
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+]
+
+CORS_ALLOW_METHODS = ['DELETE', 'GET', 'OPTIONS', 'PATCH', 'POST', 'PUT']
+
 CSRF_TRUSTED_ORIGINS = _csv_env(
     "CSRF_TRUSTED_ORIGINS",
     [
@@ -63,15 +84,9 @@ CSRF_TRUSTED_ORIGINS = _csv_env(
         "http://127.0.0.1:3000",
         "http://localhost:3000",
         "https://si-2-test1-app.vercel.app",
+        "https://si2-test1-app.onrender.com",
         "https://si2-test1-appbackend.onrender.com",
-    ] if not DEBUG else [
-        "http://127.0.0.1:8000",
-        "http://localhost:8000",
-        "http://127.0.0.1:5173",
-        "http://localhost:5173",
-        "http://127.0.0.1:3000",
-        "http://localhost:3000",
-    ],
+    ]
 )
 
 CSRF_COOKIE_NAME = "csrftoken"
@@ -91,8 +106,9 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "rest_framework",
-    'django_filters',
     "rest_framework.authtoken",
+    "django_filters",
+    "django_extensions",
     "api",
 ]
 
@@ -131,14 +147,21 @@ TEMPLATES = [
 WSGI_APPLICATION = "backend.wsgi.application"
 
 # ------------------------------------
-# Base de datos (Supabase Postgres vía pooler, SSL)
+# Base de datos (Supabase/Postgres) con variables individuales
 # ------------------------------------
 DATABASES = {
-    "default": dj_database_url.config(
-        env="DATABASE_URL",
-        conn_max_age=0,
-        ssl_require=True,
-    )
+    'default': {
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': os.getenv('dbname', 'postgres'),
+        'USER': os.getenv('user', 'postgres'),
+        'PASSWORD': os.getenv('password', ''),
+        'HOST': os.getenv('host', 'localhost'),
+        'PORT': os.getenv('port', '5432'),
+        'OPTIONS': {
+            'sslmode': 'require',
+        },
+        'CONN_MAX_AGE': 0,  # No reutilizar conexiones para evitar timeouts
+    }
 }
 
 # ------------------------------------
@@ -146,7 +169,7 @@ DATABASES = {
 # ------------------------------------
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
-    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
+    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator", "OPTIONS": {"min_length": 8}},
     {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
@@ -170,7 +193,9 @@ STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 # DRF
 # ------------------------------------
 REST_FRAMEWORK = {
-    "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.IsAuthenticated",
+    ],
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework.authentication.TokenAuthentication",
         "rest_framework.authentication.SessionAuthentication",
@@ -182,12 +207,6 @@ REST_FRAMEWORK = {
         "rest_framework.filters.SearchFilter",
         "rest_framework.filters.OrderingFilter",
     ],
-    'DEFAULT_THROTTLE_RATES': {
-        'notifications': '100/hour',
-        'communicados': '50/hour',
-        'reservas': '200/hour',
-        'ai_detection': '100/hour',
-    }
 }
 
 # ------------------------------------
@@ -196,47 +215,48 @@ REST_FRAMEWORK = {
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # ------------------------------------
-# Frontend y Email
+# Frontend / Email (opcional)
 # ------------------------------------
-FRONTEND_URL = os.getenv("FRONTEND_URL", "https://si-2-test1-app.vercel.app")
-DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "noreply.condominiumSI@gmail.com")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
+DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "no-reply@smart-condominium.local")
 
 EMAIL_BACKEND = os.getenv("EMAIL_BACKEND", "django.core.mail.backends.smtp.EmailBackend")
 EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
 EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
-EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "noreply.smartcondoSI@gmail.com")
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
 EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "True") == "True"
 EMAIL_USE_SSL = os.getenv("EMAIL_USE_SSL", "False") == "True"
 
 # ------------------------------------
-# Configuración de Supabase
+# Logging sencillo
 # ------------------------------------
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-SUPABASE_STORAGE_BUCKET = os.getenv("SUPABASE_STORAGE_BUCKET", "contenedor")
-SUPABASE_STORAGE_URL = f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_STORAGE_BUCKET}"
-
-# ------------------------------------
-# Configuración de Smart Condominium
-# ------------------------------------
-
-# Configuración de comunicados y notificaciones
-DEFAULT_REMINDER_HOURS = int(os.getenv("DEFAULT_REMINDER_HOURS", "24"))
-MAX_NOTIFICATION_RETRIES = int(os.getenv("MAX_NOTIFICATION_RETRIES", "3"))
-NOTIFICATION_RETRY_DELAY = int(os.getenv("NOTIFICATION_RETRY_DELAY", "30"))
-
-# Información del condominio para emails
-CONDOMINIUM_INFO = {
-    'name': os.getenv("CONDOMINIUM_NAME", "Smart Condominium"),
-    'address': os.getenv("CONDOMINIUM_ADDRESS", "Santa Cruz, Bolivia"),
-    'phone': os.getenv("CONDOMINIUM_PHONE", "+591 XXXXXXXX"),
-    'email': os.getenv("CONDOMINIUM_EMAIL", "noreply.condominiumSI@gmail.com"),
-    'website': FRONTEND_URL,
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "verbose": {"format": "{levelname} {asctime} {module} {message}", "style": "{"},
+    },
+    "handlers": {
+        "console": {"class": "logging.StreamHandler", "formatter": "verbose"},
+    },
+    "root": {"handlers": ["console"], "level": "INFO"},
+    "loggers": {
+        "django": {"handlers": ["console"], "level": "INFO", "propagate": False},
+        "api": {"handlers": ["console"], "level": "DEBUG", "propagate": False},
+    },
 }
 
 # ------------------------------------
-# Configuración de IA
+# Supabase (Storage / Service Key)
+# ------------------------------------
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+SUPABASE_STORAGE_BUCKET = os.getenv("SUPABASE_STORAGE_BUCKET", "ai-detection-images")
+SUPABASE_STORAGE_URL = f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_STORAGE_BUCKET}"
+
+# ------------------------------------
+# Configuración de IA (si aplica)
 # ------------------------------------
 AI_IMAGE_SETTINGS = {
     'MAX_SIZE': (1920, 1080),
@@ -247,49 +267,7 @@ AI_IMAGE_SETTINGS = {
     'PLATE_CONFIDENCE_THRESHOLD': float(os.getenv("AI_PLATE_CONFIDENCE_THRESHOLD", "0.5")),
 }
 
+# ------------------------------------
 # Microservicio IA
-AI_WORKER_URL = os.getenv('AI_WORKER_URL', 'https://fathomlessly-gasless-novella.ngrok-free.dev')
-
-# Configuración de logging
-import os
-logs_dir = os.path.join(BASE_DIR, 'logs')
-if not os.path.exists(logs_dir):
-    os.makedirs(logs_dir)
-
-LOGGING = {
-    'version': 1,
-    'disable_existing_loggers': False,
-    'formatters': {
-        'verbose': {
-            'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
-            'style': '{',
-        },
-    },
-    'handlers': {
-        'console': {
-            'class': 'logging.StreamHandler',
-            'formatter': 'verbose',
-        },
-    },
-    'root': {
-        'handlers': ['console'],
-        'level': 'INFO',
-    },
-    'loggers': {
-        'django': {
-            'handlers': ['console'],
-            'level': 'INFO',
-            'propagate': False,
-        },
-        'django.request': {
-            'handlers': ['console'],
-            'level': 'DEBUG',
-            'propagate': False,
-        },
-        'api': {
-            'handlers': ['console'],
-            'level': 'DEBUG',
-            'propagate': False,
-        },
-    },
-}
+# ------------------------------------
+AI_MICROSERVICE_URL = os.getenv('AI_MICROSERVICE_URL', 'http://localhost:8001')
