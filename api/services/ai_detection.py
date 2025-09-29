@@ -15,6 +15,8 @@ from .supabase_storage import SupabaseStorageService
 import logging
 from django.core.files.uploadedfile import InMemoryUploadedFile
 import requests
+from django.db import transaction # <--- IMPORTAR TRANSACTION
+
 logger = logging.getLogger(__name__)
 
 
@@ -89,24 +91,24 @@ class FacialRecognitionService:
         Reconoce una cara desde un archivo y la procesa completamente
         """
         try:
-            # Resetear el puntero del archivo al inicio
+            # 1. Llamar al microservicio FUERA de la transacción
             image_file.seek(0)
-
-            # Llamar al microservicio para reconocimiento
             files = {'image': (image_file.name, image_file.read(), image_file.content_type)}
-
             response = requests.post(
                 f"{self.ai_microservice_url}/facial-recognition/",
                 files=files,
                 timeout=30
             )
 
-            if response.status_code == 200:
-                ai_result = response.json()
+            if response.status_code != 200:
+                logger.error(f"Error del microservicio: {response.status_code} - {response.text}")
+                return {"success": False, "error": "Error en el servicio de reconocimiento facial"}
 
-                # Resetear archivo para guardado
-                image_file.seek(0)
+            ai_result = response.json()
+            image_file.seek(0)
 
+            # 2. Iniciar transacción atómica para operaciones de BD y almacenamiento
+            with transaction.atomic():
                 # Guardar imagen en Supabase
                 image_url = self.storage_service.upload_file(
                     image_file,
@@ -118,9 +120,7 @@ class FacialRecognitionService:
                 confidence = ai_result.get("confidence", 0.0)
                 user_id = ai_result.get("user_id") if is_resident else None
 
-                # Crear registro en base de datos
                 from ..models import ReconocimientoFacial, Usuario
-
                 usuario = None
                 if user_id:
                     try:
@@ -133,28 +133,27 @@ class FacialRecognitionService:
                     es_residente=is_resident,
                     confianza=confidence,
                     ubicacion_camara=camera_location,
-                    usuario=usuario
+                    usuario=usuario # Corregido de 'codigo_usuario' a 'usuario'
                 )
 
-                return {
-                    "success": True,
-                    "id": reconocimiento.id,
-                    "is_resident": is_resident,
-                    "confidence": confidence,
-                    "user_id": user_id,
-                    "camera_location": camera_location,
-                    "image_url": image_url,
-                    "user_name": usuario.nombre if usuario else None
-                }
-            else:
-                logger.error(f"Error del microservicio: {response.status_code} - {response.text}")
-                return {"success": False, "error": "Error en el servicio de reconocimiento facial"}
+            # 3. Devolver el resultado
+            return {
+                "success": True,
+                "id": reconocimiento.id,
+                "is_resident": is_resident,
+                "confidence": confidence,
+                "user_id": user_id,
+                "camera_location": camera_location,
+                "image_url": image_url,
+                "user_name": usuario.nombre if usuario else None
+            }
 
         except requests.exceptions.RequestException as e:
             logger.error(f"Error conectando con microservicio: {str(e)}")
             return {"success": False, "error": "Servicio de reconocimiento facial no disponible"}
         except Exception as e:
             logger.error(f"Error procesando reconocimiento facial completo: {str(e)}")
+            # La transacción se revierte automáticamente si hay una excepción dentro del bloque 'with'
             return {"success": False, "error": "Error interno en reconocimiento facial"}
 
 
@@ -202,24 +201,26 @@ class PlateDetectionService:
             if not detection_result.get("success"):
                 return detection_result
 
-            # Guardar imagen en Supabase
-            image_url = self.storage_service.upload_file(
-                image_file,
-                folder="plate_detections"
-            )
+            # Iniciar transacción atómica
+            with transaction.atomic():
+                # Guardar imagen en Supabase
+                image_url = self.storage_service.upload_file(
+                    image_file,
+                    folder="plate_detections"
+                )
 
-            # Crear registro en base de datos
-            deteccion = DeteccionPlaca.objects.create(
-                texto_placa=detection_result.get("plate_text", ""),
-                confianza=detection_result.get("confidence", 0.0),
-                imagen_url=image_url,
-                vehiculo_id=vehicle_id
-            )
+                # Crear registro en base de datos
+                deteccion = DeteccionPlaca.objects.create(
+                    placa_detectada=detection_result.get("plate_text", ""), # Corregido
+                    confianza=detection_result.get("confidence", 0.0),
+                    imagen_url=image_url,
+                    vehiculo_id=vehicle_id
+                )
 
             return {
                 "success": True,
                 "detection_id": deteccion.id,
-                "plate_text": deteccion.texto_placa,
+                "plate_text": deteccion.placa_detectada,
                 "confidence": deteccion.confianza,
                 "image_url": image_url
             }
@@ -241,24 +242,24 @@ class PlateDetectionService:
         Detecta placa desde un archivo y la procesa completamente
         """
         try:
-            # Resetear el puntero del archivo al inicio
+            # 1. Llamar al microservicio FUERA de la transacción
             image_file.seek(0)
-
-            # Llamar al microservicio para detección
             files = {'image': (image_file.name, image_file.read(), image_file.content_type)}
-
             response = requests.post(
                 f"{self.ai_microservice_url}/plate-detection/",
                 files=files,
                 timeout=30
             )
 
-            if response.status_code == 200:
-                ai_result = response.json()
+            if response.status_code != 200:
+                logger.error(f"Error del microservicio: {response.status_code} - {response.text}")
+                return {"success": False, "error": "Error en el servicio de detección de placas"}
 
-                # Resetear archivo para guardado
-                image_file.seek(0)
+            ai_result = response.json()
+            image_file.seek(0)
 
+            # 2. Iniciar transacción atómica para operaciones de BD
+            with transaction.atomic():
                 # Guardar imagen en Supabase
                 image_url = self.storage_service.upload_file(
                     image_file,
@@ -274,14 +275,15 @@ class PlateDetectionService:
                 vehiculo = None
                 if plate_text:
                     try:
-                        vehiculo = Vehiculo.objects.get(placa=plate_text, activo=True)
+                        # Asumiendo que el campo en el modelo Vehiculo es 'nro_placa'
+                        vehiculo = Vehiculo.objects.get(nro_placa=plate_text, estado='Activo')
                         is_authorized = True
                     except Vehiculo.DoesNotExist:
                         pass
 
                 # Crear registro en base de datos
                 deteccion = DeteccionPlaca.objects.create(
-                    texto_placa=plate_text,
+                    placa_detectada=plate_text,
                     confianza=confidence,
                     imagen_url=image_url,
                     ubicacion_camara=camera_location,
@@ -290,25 +292,22 @@ class PlateDetectionService:
                     vehiculo=vehiculo
                 )
 
-                return {
-                    "success": True,
-                    "id": deteccion.id,
-                    "plate": plate_text,
-                    "confidence": confidence,
-                    "is_authorized": is_authorized,
-                    "camera_location": camera_location,
-                    "access_type": access_type,
-                    "image_url": image_url,
-                    "vehicle_info": {
-                        "id": vehiculo.id,
-                        "marca": vehiculo.marca,
-                        "modelo": vehiculo.modelo,
-                        "color": vehiculo.color
-                    } if vehiculo else None
-                }
-            else:
-                logger.error(f"Error del microservicio: {response.status_code} - {response.text}")
-                return {"success": False, "error": "Error en el servicio de detección de placas"}
+            # 3. Devolver el resultado
+            return {
+                "success": True,
+                "id": deteccion.id,
+                "plate": plate_text,
+                "confidence": confidence,
+                "is_authorized": is_authorized,
+                "camera_location": camera_location,
+                "access_type": access_type,
+                "image_url": image_url,
+                "vehicle_info": {
+                    "id": vehiculo.id,
+                    "descripcion": vehiculo.descripcion,
+                    "estado": vehiculo.estado
+                } if vehiculo else None
+            }
 
         except requests.exceptions.RequestException as e:
             logger.error(f"Error conectando con microservicio: {str(e)}")
